@@ -251,8 +251,10 @@ static void write_buffer() {
           }
         }
 
-        // ReBirth338: dual acid-303 + 808 kit, mixed straight into the dry bus.
+        // ReBirth338: dual acid-303 + 808/909 kits, mixed into the dry bus.
+        int32_t rbBefore = DRUMTOTAL_L;
         rebirth338_renderInto(DRUMTOTAL_L, DRUMTOTAL_R);
+        int32_t rbProbe = DRUMTOTAL_L - rbBefore;  // TEMP: engine's own contribution
 
         // DRY
         DRUMTOTAL_L = soft_clip(DRUMTOTAL_L);
@@ -370,6 +372,26 @@ static void write_buffer() {
 
         out_buf[i * 2]     = (int16_t)finalMixL;
         out_buf[i * 2 + 1] = (int16_t)finalMixR;
+
+        // TEMP diagnostic: report once a second what the audio task is
+        // actually producing, so silence can be traced to a stage rather
+        // than guessed at.
+        {
+          static uint32_t dbgCount = 0;
+          static int32_t dbgPeakDry = 0, dbgPeakFinal = 0, dbgPeakRb = 0;
+          int32_t aDry = dryL < 0 ? -dryL : dryL;
+          int32_t aFin = finalMixL < 0 ? -finalMixL : finalMixL;
+          int32_t aRb = rbProbe < 0 ? -rbProbe : rbProbe;
+          if (aDry > dbgPeakDry) dbgPeakDry = aDry;
+          if (aFin > dbgPeakFinal) dbgPeakFinal = aFin;
+          if (aRb > dbgPeakRb) dbgPeakRb = aRb;
+          if (++dbgCount >= SAMPLE_RATE) {
+            Serial.printf("AUDIO dry=%ld final=%ld rebirth=%ld mvol=%d playing=%d\n",
+                          (long)dbgPeakDry, (long)dbgPeakFinal, (long)dbgPeakRb, mvol, playing);
+            dbgCount = 0;
+            dbgPeakDry = dbgPeakFinal = dbgPeakRb = 0;
+          }
+        }
     }
 
     bool enviado = false;

@@ -158,7 +158,13 @@ void hid_transfer_cb(usb_transfer_t *transfer) {
 
   if (transfer->status != 0) {
     hidPolling[idx] = false;  // let the poll loop retry
-    if (transfer->status != USB_TRANSFER_STATUS_NO_DEVICE) {
+    if (transfer->status == USB_TRANSFER_STATUS_NO_DEVICE) {
+      // Unplugged. The host stack owns the transfer once the device is gone,
+      // so drop our pointer instead of resubmitting into freed memory — that
+      // is what crashed when the macropad was pulled out.
+      HidIn[idx] = NULL;
+      hidDeviceGone = true;
+    } else {
       ESP_LOGW("", "HID transfer iface %d status %d", idx, transfer->status);
     }
     return;
@@ -250,7 +256,25 @@ void prepare_endpoint_hid(const void *p, uint8_t idx) {
 // Transfers resubmit themselves from the completion callback, so this only
 // gets one started per interface and recovers if one ever falls over — hence
 // the retry backoff rather than a per-report poll interval.
+// Clears enumeration state after a disconnect so replugging starts clean and
+// re-claims interfaces, instead of leaving stale ones behind.
+void usb_hid_reset() {
+  hidDeviceGone = false;
+  for (uint8_t i = 0; i < MAX_HID_IFACES; i++) {
+    HidIn[i] = NULL;
+    hidPolling[i] = false;
+    hidIsBootKeyboard[i] = 0;
+  }
+  hidIfaceCount = 0;
+  isKeyboard = false;
+  isMIDI = false;
+  isMIDIReady = false;
+  ESP_LOGI("", "USB device removed, HID state reset");
+}
+
 void usb_keyboard_poll() {
+  if (hidDeviceGone) usb_hid_reset();
+
   for (uint8_t idx = 0; idx < hidIfaceCount; idx++) {
     if (HidIn[idx] == NULL || hidPolling[idx]) continue;
     if ((millis() - hidLastPoll[idx]) < 50) continue;  // retry backoff
