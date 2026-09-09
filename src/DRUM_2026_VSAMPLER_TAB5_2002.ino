@@ -940,12 +940,16 @@ void setup() {
     &usbTaskHandle,
     0);
 
-  // BLUETOOTH (experimental, ESP-Hosted over the onboard ESP32-C6): a MIDI
-  // peripheral a phone/DAW can connect to, plus a central that connects out
-  // to BLE keyboards. Non-fatal by design — a failure here only disables
-  // Bluetooth and logs it, it never blocks boot or the rest of the machine.
-  ble_midi_begin();
-  ble_hid_begin();
+  // BLUETOOTH (experimental, ESP-Hosted over the onboard ESP32-C6).
+  //
+  // NOT started here. BLE bring-up talks SDIO to the C6 co-processor, and if
+  // that handshake fails it can abort() rather than return an error, which
+  // panics mid-setup and boot-loops the machine — with the display already
+  // up, so it looks like a flash of UI then a reset. Everything below this
+  // point (screen, tasks, sequencer) must be running before we risk it, so
+  // Bluetooth is started later from loop() via ble_start_deferred(), and only
+  // when WASABI338_ENABLE_BT is set.
+  Serial.printf("BT: %s\n", WASABI338_ENABLE_BT ? "will start after boot" : "disabled at build time");
 
   // DISPLAY 2
 
@@ -1026,6 +1030,11 @@ void loop() {
   M5.update();
 
   comprobar_jack();
+
+  // Bluetooth is brought up here rather than in setup(), a few seconds after
+  // boot, so the machine is fully running first and a failure in the C6
+  // handshake can't take the whole device down before it starts.
+  ble_start_deferred();
 
   // Connecting to a discovered BLE keyboard can't be done inside the scan
   // callback, so it happens here.

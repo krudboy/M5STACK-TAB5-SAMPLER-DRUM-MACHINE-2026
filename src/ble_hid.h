@@ -164,3 +164,28 @@ void ble_hid_begin() {}
 void ble_hid_task() {}
 
 #endif
+
+// Bluetooth off unless explicitly built in: -D WASABI338_ENABLE_BT=1
+// Bringing BLE up talks SDIO to the ESP32-C6, and a failed handshake there
+// can abort() instead of returning an error — which panics and boot-loops the
+// machine. Until that path is proven on real hardware it stays opt-in.
+#ifndef WASABI338_ENABLE_BT
+#define WASABI338_ENABLE_BT 0
+#endif
+
+// Starts Bluetooth once, a few seconds after boot, from loop(). Deferring it
+// means the display, audio task and sequencer are all already running, so a
+// crash in here is obvious and survivable rather than an unexplained loop.
+void ble_start_deferred() {
+#if WASABI338_ENABLE_BT
+  static bool started = false;
+  if (started) return;
+  if (millis() < 4000) return;  // let the machine settle first
+  started = true;
+
+  Serial.println("BT: starting Bluetooth now (deferred)");
+  ble_midi_begin();
+  ble_hid_begin();
+  Serial.println("BT: startup returned");
+#endif
+}
