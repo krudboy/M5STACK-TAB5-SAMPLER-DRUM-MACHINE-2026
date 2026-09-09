@@ -5,8 +5,8 @@
 // the existing 16 sample/synth tracks and their ROTvalue/rotary-encoder page
 // framework. Driven by its own 16-step patterns (seeded with a demo groove
 // so it's audible with no MIDI gear attached) and by MIDI note/CC messages
-// arriving from either the USB MIDI host (USB_tools.ino) or Bluetooth MIDI
-// (ble_midi.h) — both funnel into rebirth338_noteOn/noteOff/controlChange().
+// arriving from the USB MIDI host (USB_tools.ino), which funnel into
+// rebirth338_noteOn/noteOff/controlChange().
 //
 // MIDI channel map (1-indexed, matching parse_midi_message()'s convention):
 //   channel 3  -> Acid 303 A
@@ -293,7 +293,7 @@ public:
     accR += mix;
   }
 
-  // Shared by the USB MIDI host (USB_tools.ino) and Bluetooth MIDI (ble_midi.h).
+  // Driven by the USB MIDI host (USB_tools.ino).
   void noteOn(uint8_t channel, uint8_t note, uint8_t velocity) {
     if (channel == ACID_A_CHANNEL) acidA.noteOn(note, velocity >= 100, false);
     else if (channel == ACID_B_CHANNEL) acidB.noteOn(note, velocity >= 100, false);

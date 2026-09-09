@@ -1170,57 +1170,19 @@ void fillBPOS() {
 
 }
 
-// Short label for a BT_* connection state.
-static const char *bt_state_text(uint8_t state, const char *ready_word) {
-  switch (state) {
-    case BT_INIT: return "init";
-    case BT_READY: return ready_word;
-    case BT_LINKING: return "pairing";
-    case BT_CONNECTED: return "REGISTERED";
-    default: return "off";
-  }
-}
-
-static uint16_t bt_state_color(uint8_t state) {
-  switch (state) {
-    case BT_CONNECTED: return ZGREENALTER;
-    case BT_LINKING: return ORANGE;
-    case BT_READY: return ZYELLOW;
-    case BT_INIT: return DARKGREY;
-    default: return DARKGREY;
-  }
-}
-
 // Input status panel, to the right of the LEARN / USB KBD buttons on the
-// GLOBAL page: Bluetooth MIDI and Bluetooth keyboard link state plus what USB
-// is doing, and — with USB KBD toggled on — the raw HID reports coming in, so
-// a macropad, knob or joystick can be mapped from real captured data.
+// GLOBAL page: what USB has enumerated, and — with USB KBD toggled on — the
+// raw HID reports coming in, so a macropad, knob or joystick can be mapped
+// from real captured data rather than guesswork.
 void draw_hid_monitor() {
   const int px = 480, py = 200, pw = 640, ph = 100;
-  const unsigned long now = millis();
 
   M5.Display.fillRect(px, py, pw, ph, BLACK);
   M5.Display.drawRect(px, py, pw - 1, ph - 1, DARKGREY);
   M5.Display.setTextSize(2);
 
-  // --- Bluetooth line: MIDI peripheral + keyboard central ---
-  M5.Display.setCursor(px + 6, py + 3);
-  M5.Display.setTextColor(bt_state_color(bleMidiStatus), BLACK);
-  M5.Display.printf("BT MIDI:%s", bt_state_text(bleMidiStatus, "adv"));
-  // "RX" flashes for a moment after each message arrives
-  if (now - bleMidiLastRx < 400) {
-    M5.Display.setTextColor(ZCYAN, BLACK);
-    M5.Display.print(" RX");
-  }
-  M5.Display.setTextColor(bt_state_color(bleKbdStatus), BLACK);
-  M5.Display.printf("  KBD:%s", bt_state_text(bleKbdStatus, "scan"));
-  if (now - bleKbdLastRx < 400) {
-    M5.Display.setTextColor(ZCYAN, BLACK);
-    M5.Display.print(" RX");
-  }
-
   // --- USB line ---
-  M5.Display.setCursor(px + 6, py + 22);
+  M5.Display.setCursor(px + 6, py + 3);
   M5.Display.setTextColor(ZCYAN, BLACK);
   if (isMIDI) {
     M5.Display.printf("USB: MIDI %s", isMIDIReady ? "ready" : "claiming");
@@ -1235,17 +1197,12 @@ void draw_hid_monitor() {
     M5.Display.setTextColor(ZYELLOW, BLACK);
     for (uint8_t line = 0; line < 3; line++) {
       if (hidLogLen[line] == 0) continue;
-      M5.Display.setCursor(px + 6, py + 44 + (line * 18));
+      M5.Display.setCursor(px + 6, py + 25 + (line * 20));
       M5.Display.printf("i%d", hidLogIface[line]);
       for (uint8_t b = 0; b < hidLogLen[line] && b < 8; b++) {
         M5.Display.printf(" %02x", hidLogBytes[line][b]);
       }
     }
-  } else if (bleKbdName[0] || bleMidiPeer[0]) {
-    M5.Display.setTextColor(DARKGREY, BLACK);
-    M5.Display.setCursor(px + 6, py + 44);
-    if (bleKbdName[0]) M5.Display.printf("kbd:%s ", bleKbdName);
-    if (bleMidiPeer[0]) M5.Display.printf("midi:%s", bleMidiPeer);
   }
 
   M5.Display.setTextSize(2);

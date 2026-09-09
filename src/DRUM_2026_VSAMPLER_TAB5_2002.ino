@@ -109,25 +109,6 @@ uint8_t hidIsBootKeyboard[MAX_HID_IFACES] = { 0, 0, 0, 0 };
 uint8_t hidIfaceNumber[MAX_HID_IFACES] = { 0, 0, 0, 0 };
 uint16_t hidPacketSize[MAX_HID_IFACES] = { 8, 8, 8, 8 };
 
-///////////////////////////////////////////////////////////// BLUETOOTH STATUS
-// Shared by the BLE MIDI peripheral and the BLE HID keyboard central, and
-// rendered by the status panel on the GLOBAL page.
-#define BT_OFF 0        // not compiled in, or init failed
-#define BT_INIT 1       // bringing the stack up
-#define BT_READY 2      // advertising (MIDI) / scanning (keyboard)
-#define BT_LINKING 3    // found a device, connecting/pairing
-#define BT_CONNECTED 4  // registered and exchanging data
-
-uint8_t bleMidiStatus = BT_OFF;
-uint8_t bleKbdStatus = BT_OFF;
-uint32_t bleMidiRxCount = 0;
-uint32_t bleKbdRxCount = 0;
-unsigned long bleMidiLastRx = 0;
-unsigned long bleKbdLastRx = 0;
-char bleKbdName[24] = "";
-char bleMidiPeer[24] = "";
-bool refresh_bt_status = false;
-
 // USB KBD monitor: newest-first log of the most recent HID reports
 #define HID_LOG_LINES 4
 bool usb_hid_monitor = false;
@@ -609,8 +590,6 @@ uint8_t old_vol = 0;
 #include "midi_learn.h"     // MIDI CC / USB-key -> parameter learn + storage
 #include "usb_keyboard.h"   // USB HID boot keyboard: notes, transport, learn
 #include "rebirth338.h"     // dual acid-303 + 808 kit
-#include "ble_midi.h"       // Bluetooth MIDI peripheral (experimental, ESP-Hosted)
-#include "ble_hid.h"        // Bluetooth keyboard central (HID-over-GATT)
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -940,16 +919,6 @@ void setup() {
     &usbTaskHandle,
     0);
 
-  // BLUETOOTH (experimental, ESP-Hosted over the onboard ESP32-C6).
-  //
-  // NOT started here. BLE bring-up talks SDIO to the C6 co-processor, and if
-  // that handshake fails it can abort() rather than return an error, which
-  // panics mid-setup and boot-loops the machine — with the display already
-  // up, so it looks like a flash of UI then a reset. Everything below this
-  // point (screen, tasks, sequencer) must be running before we risk it, so
-  // Bluetooth is started later from loop() via ble_start_deferred(), and only
-  // when WASABI338_ENABLE_BT is set.
-  Serial.printf("BT: %s\n", WASABI338_ENABLE_BT ? "will start after boot" : "disabled at build time");
 
   // DISPLAY 2
 
@@ -1030,15 +999,6 @@ void loop() {
   M5.update();
 
   comprobar_jack();
-
-  // Bluetooth is brought up here rather than in setup(), a few seconds after
-  // boot, so the machine is fully running first and a failure in the C6
-  // handshake can't take the whole device down before it starts.
-  ble_start_deferred();
-
-  // Connecting to a discovered BLE keyboard can't be done inside the scan
-  // callback, so it happens here.
-  ble_hid_task();
 
 }
 

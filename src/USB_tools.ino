@@ -7,10 +7,6 @@
  * @param data2 Segundo byte de datos (ej. velocidad).
  */
 void send_midi_message(uint8_t status_byte, uint8_t channel, uint8_t data1, uint8_t data2) {
-  // Mirror every outgoing message to any connected Bluetooth MIDI central,
-  // independent of USB MIDI host state.
-  ble_midi_send(status_byte, channel, data1, data2);
-
   // Comprobar si el dispositivo MIDI está listo para enviar datos
   if (!isMIDIReady || MIDIOut == NULL) {
     return;
