@@ -1,8 +1,23 @@
 // Función de soft clipping en enteros
+//
+// Softens overshoot as before, but saturates instead of folding back. The
+// original subtracted an eighth of the excess without limit, so it crossed
+// zero at sample = 294903 and inverted beyond that — a loud enough mix came
+// out silent, then phase-inverted, instead of clipped. Easy to miss with a
+// handful of voices and immediate once the drum engines pushed the bus hard.
 inline int16_t soft_clip(int32_t sample) {
-    if (sample > 32767) return 32767 - ((sample - 32767) >> 3);
-    if (sample < -32768) return -32768 + ((-32768 - sample) >> 3);
-    return sample;
+    const int32_t MAX_SOFT = 767;  // keeps the result inside [32000, 32767]
+    if (sample > 32767) {
+        int32_t soft = (sample - 32767) >> 3;
+        if (soft > MAX_SOFT) soft = MAX_SOFT;
+        return (int16_t)(32767 - soft);
+    }
+    if (sample < -32768) {
+        int32_t soft = ((-32768) - sample) >> 3;
+        if (soft > MAX_SOFT) soft = MAX_SOFT;
+        return (int16_t)(-32768 + soft);
+    }
+    return (int16_t)sample;
 }
 
 

@@ -209,7 +209,7 @@ private:
     float tone = r338_sin(phase);
     float click = (age < 6) ? ((float)(int16_t)nextNoise() / 32768.0f) * 0.5f : 0.0f;
     ampEnv -= ampEnv * 0.00135f;
-    return (tone + click) * ampEnv * vel * 10000.0f;
+    return (tone + click) * ampEnv * vel * 13000.0f;
   }
 
   float renderTomLike(float startHz, float endHz, float sweepCoef, float decayRate) {
@@ -219,7 +219,7 @@ private:
     if (phase >= 1.0f) phase -= 1.0f;
     float tone = r338_sin(phase);
     ampEnv -= ampEnv * decayRate;
-    return tone * ampEnv * vel * 8800.0f;
+    return tone * ampEnv * vel * 11500.0f;
   }
 
   float renderSnare() {
@@ -231,7 +231,7 @@ private:
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * 0.0032f;
     float noiseAmp = ampEnv * ampEnv;  // noise tail dies faster than the tone
-    return (tone * ampEnv * 0.5f + noise * noiseAmp * 0.8f) * vel * 10000.0f;
+    return (tone * ampEnv * 0.5f + noise * noiseAmp * 0.8f) * vel * 13000.0f;
   }
 
   float renderRimshot() {
@@ -240,7 +240,7 @@ private:
     float tone = (phase < 0.5f) ? 1.0f : -1.0f;
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * 0.02f;
-    return (tone * 0.6f + noise * 0.4f) * ampEnv * vel * 8200.0f;
+    return (tone * 0.6f + noise * 0.4f) * ampEnv * vel * 10500.0f;
   }
 
   float renderClap() {
@@ -254,7 +254,7 @@ private:
     float rate = (pulseIndex < 3) ? 0.02f : 0.0028f;
     ampEnv -= ampEnv * rate;
     pulseAge++;
-    return noise * ampEnv * vel * 8800.0f;
+    return noise * ampEnv * vel * 11500.0f;
   }
 
   float renderHat(float decayRate) {
@@ -272,7 +272,7 @@ private:
     hpState += (mix - hpState) * 0.35f;  // crude one-pole high-pass
     float hp = mix - hpState;
     ampEnv -= ampEnv * decayRate;
-    return hp * ampEnv * vel * 6200.0f;
+    return hp * ampEnv * vel * 8000.0f;
   }
 
   float renderCowbell() {
@@ -282,7 +282,7 @@ private:
     if (phase2 >= 1.0f) phase2 -= 1.0f;
     float tone = ((phase < 0.5f) ? 1.0f : -1.0f) * 0.5f + ((phase2 < 0.5f) ? 1.0f : -1.0f) * 0.5f;
     ampEnv -= ampEnv * 0.0026f;
-    return tone * ampEnv * vel * 6200.0f;
+    return tone * ampEnv * vel * 8000.0f;
   }
 
   Type type = KICK;
@@ -362,7 +362,7 @@ private:
     float tone = r338_sin(phase);
     float click = (age < 30) ? (1.0f - (float)age / 30.0f) * 0.7f : 0.0f;
     ampEnv -= ampEnv * 0.00105f;
-    return (tone + click) * ampEnv * vel * 11500.0f;
+    return (tone + click) * ampEnv * vel * 15000.0f;
   }
 
   float renderSnare() {
@@ -374,7 +374,7 @@ private:
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * 0.0030f;
     noiseEnv -= noiseEnv * 0.0020f;  // noise outlasts the tone, unlike the 808
-    return (tone * ampEnv * 0.4f + noise * noiseEnv * 1.0f) * vel * 10000.0f;
+    return (tone * ampEnv * 0.4f + noise * noiseEnv * 1.0f) * vel * 13000.0f;
   }
 
   float renderTom(float startHz, float endHz, float decayRate) {
@@ -385,7 +385,7 @@ private:
     float tone = r338_sin(phase);
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * decayRate;
-    return (tone * 0.9f + noise * 0.1f) * ampEnv * vel * 8800.0f;
+    return (tone * 0.9f + noise * 0.1f) * ampEnv * vel * 11500.0f;
   }
 
   float renderRim() {
@@ -394,7 +394,7 @@ private:
     float tone = (phase < 0.5f) ? 1.0f : -1.0f;
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * 0.035f;
-    return (tone * 0.5f + noise * 0.5f) * ampEnv * vel * 8200.0f;
+    return (tone * 0.5f + noise * 0.5f) * ampEnv * vel * 10500.0f;
   }
 
   float renderClap() {
@@ -407,7 +407,7 @@ private:
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * ((pulseIndex < 3) ? 0.022f : 0.0026f);
     pulseAge++;
-    return noise * ampEnv * vel * 9500.0f;
+    return noise * ampEnv * vel * 12500.0f;
   }
 
   // Six detuned squares high-passed into metal. Ratios are stretched further
@@ -431,7 +431,7 @@ private:
       hp = hp * (1.0f - tonal) + r338_sin(phase2) * tonal;
     }
     ampEnv -= ampEnv * decayRate;
-    return hp * ampEnv * vel * 7000.0f;
+    return hp * ampEnv * vel * 9000.0f;
   }
 
   Type type = BD;
@@ -692,9 +692,8 @@ private:
   uint16_t patDrum909[Drum909Voice::TYPE_COUNT] = { 0 };
   uint8_t drumLevels909[Drum909Voice::TYPE_COUNT] = { 110, 110, 110, 110, 110, 110, 110, 110, 110, 110, 110 };
 
-  // Runs at full scale into the master bus; the bus soft-clips after this, and
-  // trimming here just made the whole engine sit quietly under the sampler.
-  uint8_t masterLevel = 255;
+  // Loud, but leaving room for the sampler tracks sharing the master bus.
+  uint8_t masterLevel = 200;
 };
 
 Rebirth338Engine rebirth338;
