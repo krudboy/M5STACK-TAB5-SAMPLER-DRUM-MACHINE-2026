@@ -22,6 +22,35 @@ static inline float r338_noteToFreq(uint8_t note) {
   return 440.0f * powf(2.0f, ((float)note - 69.0f) / 12.0f);
 }
 
+// A sine table and incremental envelopes, because calling sinf()/expf() once
+// per voice per sample at 44.1kHz is what made the audio stutter once the 909
+// doubled the voice count. Both are exact enough here and vastly cheaper.
+#define R338_SINE_BITS 10
+#define R338_SINE_SIZE (1 << R338_SINE_BITS)
+static float r338SineLut[R338_SINE_SIZE];
+static bool r338LutReady = false;
+
+static void r338_init_lut() {
+  if (r338LutReady) return;
+  for (int i = 0; i < R338_SINE_SIZE; i++) {
+    r338SineLut[i] = sinf((float)i * 6.2831853f / (float)R338_SINE_SIZE);
+  }
+  r338LutReady = true;
+}
+
+// phase is 0..1
+static inline float r338_sin(float phase) {
+  int idx = (int)(phase * (float)R338_SINE_SIZE) & (R338_SINE_SIZE - 1);
+  return r338SineLut[idx];
+}
+
+// exp(-rate * age) accumulated one sample at a time: pitchEnv *= coef.
+#define R338_KICK808_SWEEP 0.99780242f
+#define R338_TOM808_LO_SWEEP 0.90483742f
+#define R338_TOM808_HI_SWEEP 0.93239382f
+#define R338_KICK909_SWEEP 0.99252805f
+#define R338_TOM909_SWEEP 0.95122942f
+
 // ------------------------------------------------------------- Acid303Voice
 // Monophonic TB-303-style voice: saw/square oscillator -> resonant lowpass
 // filter swept by its own decaying envelope, plus accent and slide (glide),
@@ -139,6 +168,7 @@ public:
     phase = phase2 = 0.0f;
     age = 0;
     ampEnv = 1.0f;
+    pitchEnv = 1.0f;
     pulseIndex = 0;
     pulseAge = 0;
   }
@@ -148,8 +178,8 @@ public:
     float s;
     switch (type) {
       case KICK:       s = renderKick(); break;
-      case LOW_TOM:    s = renderTomLike(120.0f, 55.0f, 0.10f, 0.0016f); break;
-      case HI_TOM:     s = renderTomLike(240.0f, 140.0f, 0.07f, 0.0022f); break;
+      case LOW_TOM:    s = renderTomLike(120.0f, 55.0f, R338_TOM808_LO_SWEEP, 0.0016f); break;
+      case HI_TOM:     s = renderTomLike(240.0f, 140.0f, R338_TOM808_HI_SWEEP, 0.0022f); break;
       case SNARE:      s = renderSnare(); break;
       case RIMSHOT:    s = renderRimshot(); break;
       case CLAP:       s = renderClap(); break;
@@ -172,22 +202,24 @@ private:
   }
 
   float renderKick() {
-    float pitchHz = 55.0f + 150.0f * expf(-(float)age * 0.0022f);  // 205Hz -> 55Hz sweep
+    pitchEnv *= R338_KICK808_SWEEP;  // 205Hz -> 55Hz sweep
+    float pitchHz = 55.0f + 150.0f * pitchEnv;
     phase += pitchHz / (float)SAMPLE_RATE;
     if (phase >= 1.0f) phase -= 1.0f;
-    float tone = sinf(phase * 6.2831853f);
+    float tone = r338_sin(phase);
     float click = (age < 6) ? ((float)(int16_t)nextNoise() / 32768.0f) * 0.5f : 0.0f;
     ampEnv -= ampEnv * 0.00135f;
-    return (tone + click) * ampEnv * vel * 15000.0f;
+    return (tone + click) * ampEnv * vel * 10000.0f;
   }
 
-  float renderTomLike(float startHz, float endHz, float sweep, float decayRate) {
-    float pitchHz = endHz + (startHz - endHz) * expf(-(float)age * sweep);
+  float renderTomLike(float startHz, float endHz, float sweepCoef, float decayRate) {
+    pitchEnv *= sweepCoef;
+    float pitchHz = endHz + (startHz - endHz) * pitchEnv;
     phase += pitchHz / (float)SAMPLE_RATE;
     if (phase >= 1.0f) phase -= 1.0f;
-    float tone = sinf(phase * 6.2831853f);
+    float tone = r338_sin(phase);
     ampEnv -= ampEnv * decayRate;
-    return tone * ampEnv * vel * 13000.0f;
+    return tone * ampEnv * vel * 8800.0f;
   }
 
   float renderSnare() {
@@ -195,11 +227,11 @@ private:
     if (phase >= 1.0f) phase -= 1.0f;
     phase2 += 330.0f / (float)SAMPLE_RATE;
     if (phase2 >= 1.0f) phase2 -= 1.0f;
-    float tone = sinf(phase * 6.2831853f) * 0.5f + sinf(phase2 * 6.2831853f) * 0.5f;
+    float tone = r338_sin(phase) * 0.5f + r338_sin(phase2) * 0.5f;
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * 0.0032f;
     float noiseAmp = ampEnv * ampEnv;  // noise tail dies faster than the tone
-    return (tone * ampEnv * 0.5f + noise * noiseAmp * 0.8f) * vel * 15000.0f;
+    return (tone * ampEnv * 0.5f + noise * noiseAmp * 0.8f) * vel * 10000.0f;
   }
 
   float renderRimshot() {
@@ -208,7 +240,7 @@ private:
     float tone = (phase < 0.5f) ? 1.0f : -1.0f;
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * 0.02f;
-    return (tone * 0.6f + noise * 0.4f) * ampEnv * vel * 12000.0f;
+    return (tone * 0.6f + noise * 0.4f) * ampEnv * vel * 8200.0f;
   }
 
   float renderClap() {
@@ -222,7 +254,7 @@ private:
     float rate = (pulseIndex < 3) ? 0.02f : 0.0028f;
     ampEnv -= ampEnv * rate;
     pulseAge++;
-    return noise * ampEnv * vel * 13000.0f;
+    return noise * ampEnv * vel * 8800.0f;
   }
 
   float renderHat(float decayRate) {
@@ -240,7 +272,7 @@ private:
     hpState += (mix - hpState) * 0.35f;  // crude one-pole high-pass
     float hp = mix - hpState;
     ampEnv -= ampEnv * decayRate;
-    return hp * ampEnv * vel * 9000.0f;
+    return hp * ampEnv * vel * 6200.0f;
   }
 
   float renderCowbell() {
@@ -250,7 +282,7 @@ private:
     if (phase2 >= 1.0f) phase2 -= 1.0f;
     float tone = ((phase < 0.5f) ? 1.0f : -1.0f) * 0.5f + ((phase2 < 0.5f) ? 1.0f : -1.0f) * 0.5f;
     ampEnv -= ampEnv * 0.0026f;
-    return tone * ampEnv * vel * 9000.0f;
+    return tone * ampEnv * vel * 6200.0f;
   }
 
   Type type = KICK;
@@ -259,7 +291,7 @@ private:
   float phase = 0.0f, phase2 = 0.0f;
   float hatPhase[6] = { 0, 0, 0, 0, 0, 0 };
   float hpState = 0.0f;
-  float ampEnv = 0.0f;
+  float ampEnv = 0.0f, pitchEnv = 1.0f;
   uint16_t lfsr = 0xACE1u;
   uint32_t age = 0;
   uint8_t pulseIndex = 0;
@@ -285,6 +317,7 @@ public:
     phase = phase2 = 0.0f;
     age = 0;
     ampEnv = 1.0f;
+    pitchEnv = 1.0f;
     noiseEnv = 1.0f;
     pulseIndex = 0;
     pulseAge = 0;
@@ -322,13 +355,14 @@ private:
 
   float renderKick() {
     // Tighter sweep than the 808 and a hard click at the very start.
-    float pitchHz = 48.0f + 90.0f * expf(-(float)age * 0.0075f);
+    pitchEnv *= R338_KICK909_SWEEP;
+    float pitchHz = 48.0f + 90.0f * pitchEnv;
     phase += pitchHz / (float)SAMPLE_RATE;
     if (phase >= 1.0f) phase -= 1.0f;
-    float tone = sinf(phase * 6.2831853f);
+    float tone = r338_sin(phase);
     float click = (age < 30) ? (1.0f - (float)age / 30.0f) * 0.7f : 0.0f;
     ampEnv -= ampEnv * 0.00105f;
-    return (tone + click) * ampEnv * vel * 17000.0f;
+    return (tone + click) * ampEnv * vel * 11500.0f;
   }
 
   float renderSnare() {
@@ -336,21 +370,22 @@ private:
     if (phase >= 1.0f) phase -= 1.0f;
     phase2 += 476.0f / (float)SAMPLE_RATE;
     if (phase2 >= 1.0f) phase2 -= 1.0f;
-    float tone = sinf(phase * 6.2831853f) * 0.6f + sinf(phase2 * 6.2831853f) * 0.4f;
+    float tone = r338_sin(phase) * 0.6f + r338_sin(phase2) * 0.4f;
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * 0.0030f;
     noiseEnv -= noiseEnv * 0.0020f;  // noise outlasts the tone, unlike the 808
-    return (tone * ampEnv * 0.4f + noise * noiseEnv * 1.0f) * vel * 15000.0f;
+    return (tone * ampEnv * 0.4f + noise * noiseEnv * 1.0f) * vel * 10000.0f;
   }
 
   float renderTom(float startHz, float endHz, float decayRate) {
-    float pitchHz = endHz + (startHz - endHz) * expf(-(float)age * 0.05f);
+    pitchEnv *= R338_TOM909_SWEEP;
+    float pitchHz = endHz + (startHz - endHz) * pitchEnv;
     phase += pitchHz / (float)SAMPLE_RATE;
     if (phase >= 1.0f) phase -= 1.0f;
-    float tone = sinf(phase * 6.2831853f);
+    float tone = r338_sin(phase);
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * decayRate;
-    return (tone * 0.9f + noise * 0.1f) * ampEnv * vel * 13000.0f;
+    return (tone * 0.9f + noise * 0.1f) * ampEnv * vel * 8800.0f;
   }
 
   float renderRim() {
@@ -359,7 +394,7 @@ private:
     float tone = (phase < 0.5f) ? 1.0f : -1.0f;
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * 0.035f;
-    return (tone * 0.5f + noise * 0.5f) * ampEnv * vel * 12000.0f;
+    return (tone * 0.5f + noise * 0.5f) * ampEnv * vel * 8200.0f;
   }
 
   float renderClap() {
@@ -372,7 +407,7 @@ private:
     float noise = (float)(int16_t)nextNoise() / 32768.0f;
     ampEnv -= ampEnv * ((pulseIndex < 3) ? 0.022f : 0.0026f);
     pulseAge++;
-    return noise * ampEnv * vel * 14000.0f;
+    return noise * ampEnv * vel * 9500.0f;
   }
 
   // Six detuned squares high-passed into metal. Ratios are stretched further
@@ -393,10 +428,10 @@ private:
     if (tonal > 0.0f) {
       phase2 += 1050.0f / (float)SAMPLE_RATE;
       if (phase2 >= 1.0f) phase2 -= 1.0f;
-      hp = hp * (1.0f - tonal) + sinf(phase2 * 6.2831853f) * tonal;
+      hp = hp * (1.0f - tonal) + r338_sin(phase2) * tonal;
     }
     ampEnv -= ampEnv * decayRate;
-    return hp * ampEnv * vel * 10000.0f;
+    return hp * ampEnv * vel * 7000.0f;
   }
 
   Type type = BD;
@@ -405,7 +440,7 @@ private:
   float phase = 0.0f, phase2 = 0.0f;
   float hatPhase[6] = { 0, 0, 0, 0, 0, 0 };
   float hpState = 0.0f;
-  float ampEnv = 0.0f, noiseEnv = 0.0f;
+  float ampEnv = 0.0f, noiseEnv = 0.0f, pitchEnv = 1.0f;
   uint16_t lfsr = 0x1234u;
   uint32_t age = 0;
   uint8_t pulseIndex = 0;
@@ -421,6 +456,7 @@ public:
   static const uint8_t DRUM909_CHANNEL = 11;  // 909 kit, same note map
 
   void begin() {
+    r338_init_lut();
     acidA.begin();
     acidB.begin();
     acidA.setWave(Acid303Voice::WAVE_SAW);
@@ -456,7 +492,13 @@ public:
     int32_t mix = acidA.render() + acidB.render();
     for (uint8_t d = 0; d < Drum808Voice::TYPE_COUNT; d++) mix += drums[d].render();
     for (uint8_t d = 0; d < Drum909Voice::TYPE_COUNT; d++) mix += drums909[d].render();
+
+    // Soft-clip the engine's own bus rather than handing an oversized sum to
+    // the master. Headroom comes from the per-voice gains below: they're set
+    // so roughly four simultaneous hits reach full scale, which is what a
+    // busy pattern actually looks like.
     mix = (mix * (int32_t)masterLevel) >> 8;
+    mix = soft_clip(mix);
     accL += mix;
     accR += mix;
   }
