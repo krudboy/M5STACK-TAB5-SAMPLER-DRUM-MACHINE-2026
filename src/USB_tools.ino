@@ -155,23 +155,35 @@ void hid_transfer_cb(usb_transfer_t *transfer) {
 
   uint8_t idx = (uint8_t)(uintptr_t)transfer->context;
   if (idx >= MAX_HID_IFACES) return;
-  hidPolling[idx] = false;
 
   if (transfer->status != 0) {
+    hidPolling[idx] = false;  // let the poll loop retry
     if (transfer->status != USB_TRANSFER_STATUS_NO_DEVICE) {
       ESP_LOGW("", "HID transfer iface %d status %d", idx, transfer->status);
     }
     return;
   }
-  if (transfer->actual_num_bytes == 0) return;
 
-  hid_log_report(idx, transfer->data_buffer, transfer->actual_num_bytes);
+  if (transfer->actual_num_bytes > 0) {
+    hid_log_report(idx, transfer->data_buffer, transfer->actual_num_bytes);
 
-  // Only boot keyboard reports have the fixed 8-byte modifier/keycode layout;
-  // anything else (knobs, joysticks) is logged for the monitor until we know
-  // what its reports actually look like.
-  if (hidIsBootKeyboard[idx] && transfer->actual_num_bytes == 8) {
-    usb_kbd_handle_report(transfer->data_buffer);
+    // Only boot keyboard reports have the fixed 8-byte modifier/keycode
+    // layout; anything else (knobs, joysticks) is logged for the monitor
+    // until we know what its reports actually look like.
+    if (hidIsBootKeyboard[idx] && transfer->actual_num_bytes == 8) {
+      usb_kbd_handle_report(idx, transfer->data_buffer);
+    }
+  }
+
+  // Resubmit straight away so a transfer is always in flight. The host
+  // controller already paces interrupt endpoints at bInterval; gating this
+  // behind our own timer instead dropped reports between polls, and losing
+  // the key-up between two presses of the same key made a rotary knob read
+  // as one held key per two clicks.
+  esp_err_t err = usb_host_transfer_submit(transfer);
+  if (err != ESP_OK) {
+    hidPolling[idx] = false;
+    ESP_LOGW("", "HID resubmit iface %d fail: %x", idx, err);
   }
 }
 
@@ -232,12 +244,13 @@ void prepare_endpoint_hid(const void *p, uint8_t idx) {
       endpoint->bEndpointAddress, mps, hidInterval[idx]);
 }
 
-// Interrupt endpoints aren't self-resubmitting like the MIDI bulk IN buffers,
-// so each HID interface is polled from the USB host task at its own interval.
+// Transfers resubmit themselves from the completion callback, so this only
+// gets one started per interface and recovers if one ever falls over — hence
+// the retry backoff rather than a per-report poll interval.
 void usb_keyboard_poll() {
   for (uint8_t idx = 0; idx < hidIfaceCount; idx++) {
     if (HidIn[idx] == NULL || hidPolling[idx]) continue;
-    if ((millis() - hidLastPoll[idx]) < hidInterval[idx]) continue;
+    if ((millis() - hidLastPoll[idx]) < 50) continue;  // retry backoff
 
     hidLastPoll[idx] = millis();
     HidIn[idx]->num_bytes = hidPacketSize[idx];

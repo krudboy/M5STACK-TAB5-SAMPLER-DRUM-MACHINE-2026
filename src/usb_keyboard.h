@@ -212,8 +212,14 @@ void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
 // Decode one 8-byte HID boot report and fire on newly-pressed keys only, so
 // holding a key doesn't retrigger. Byte 0 = modifiers, byte 1 reserved,
 // bytes 2-7 = up to six simultaneously-held keycodes.
-void usb_kbd_handle_report(const uint8_t *report) {
-  static uint8_t previous[6] = { 0, 0, 0, 0, 0, 0 };
+//
+// The held-key state is per interface: a macropad exposes several HID
+// interfaces at once, and sharing one buffer between them would make each
+// one's reports look like key-ups for the other.
+void usb_kbd_handle_report(uint8_t iface, const uint8_t *report) {
+  static uint8_t previous[MAX_HID_IFACES][6] = { { 0 } };
+  if (iface >= MAX_HID_IFACES) return;
+
   uint8_t modifiers = report[0];
 
   for (uint8_t i = 0; i < 6; i++) {
@@ -222,7 +228,7 @@ void usb_kbd_handle_report(const uint8_t *report) {
 
     bool was_held = false;
     for (uint8_t j = 0; j < 6; j++) {
-      if (previous[j] == key) {
+      if (previous[iface][j] == key) {
         was_held = true;
         break;
       }
@@ -230,5 +236,5 @@ void usb_kbd_handle_report(const uint8_t *report) {
     if (!was_held) usb_kbd_key_down(key, modifiers);
   }
 
-  memcpy(previous, &report[2], 6);
+  memcpy(previous[iface], &report[2], 6);
 }
