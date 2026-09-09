@@ -42,6 +42,11 @@ bool rebirth_ui_mode_changed = false;
 bool rebirth_ui_needs_redraw = false;
 uint8_t rebirth_sel = RB_SEL_ACID_A;
 uint8_t rebirth_edit_mode = 0;  // 0 = step on/off, 1 = accent, 2 = slide
+uint8_t rebirth_machine = 0;    // 0 = 808 kit, 1 = 909 kit
+
+// Which knob the hardware encoder is driving. Its click advances the focus,
+// so the whole panel is reachable from a macropad without touching the glass.
+uint8_t rebirth_focus = 0;
 
 // Defined in the .ino translation units.
 void select_rot();
@@ -69,6 +74,32 @@ static const RbKnob rbAcidKnobs[] = {
 #define RB_ACID_KNOB_COUNT (sizeof(rbAcidKnobs) / sizeof(rbAcidKnobs[0]))
 
 static const char *rbDrumNames[] = { "BD", "SD", "CP", "CH", "OH", "LT", "HT", "CB", "RS" };
+static const char *rbDrum909Names[] = { "BD", "SD", "LT", "MT", "HT", "RIM", "CLAP", "CH", "OH", "CR", "RD" };
+
+static uint8_t rb_drum_count() {
+  return rebirth_machine ? rebirth338.drum909Count() : rebirth338.drumCount();
+}
+static const char *rb_drum_name(uint8_t d) {
+  return rebirth_machine ? rbDrum909Names[d] : rbDrumNames[d];
+}
+static uint8_t rb_drum_level(uint8_t d) {
+  return rebirth_machine ? rebirth338.drum909Level(d) : rebirth338.drumLevel(d);
+}
+static void rb_set_drum_level(uint8_t d, uint8_t v) {
+  if (rebirth_machine) rebirth338.setDrum909Level(d, v);
+  else rebirth338.setDrumLevel(d, v);
+}
+static bool rb_drum_step(uint8_t d, uint8_t s) {
+  return rebirth_machine ? rebirth338.drum909Step(d, s) : rebirth338.drumStep(d, s);
+}
+static void rb_toggle_drum_step(uint8_t d, uint8_t s) {
+  if (rebirth_machine) rebirth338.toggleDrum909Step(d, s);
+  else rebirth338.toggleDrumStep(d, s);
+}
+static void rb_audition_drum(uint8_t d) {
+  if (rebirth_machine) rebirth338.auditionDrum909(d);
+  else rebirth338.auditionDrum(d);
+}
 
 // ---------------------------------------------------------------- helpers
 
@@ -110,10 +141,43 @@ static void rb_param_nudge(uint8_t which, uint8_t param, int delta) {
   }
 }
 
+// ----------------------------------------------------------------- focus
+// Focus order: acid A's six knobs, acid B's six, then the drum levels of
+// whichever kit is showing.
+#define RB_FOCUS_DRUM_BASE 12
+
+static uint8_t rb_focus_count() {
+  return RB_FOCUS_DRUM_BASE + rb_drum_count();
+}
+
+void rb_focus_advance() {
+  rebirth_focus = (rebirth_focus + 1) % rb_focus_count();
+  rebirth_ui_needs_redraw = true;
+}
+
+// One detent moves a wide-range parameter further than a 0-127 one, so a
+// full sweep takes a comparable number of turns either way.
+void rb_focus_adjust(int delta) {
+  if (rebirth_focus < RB_FOCUS_DRUM_BASE) {
+    uint8_t which = rebirth_focus / RB_ACID_KNOB_COUNT;
+    uint8_t param = rebirth_focus % RB_ACID_KNOB_COUNT;
+    int step = (rb_param_max(param) > 127) ? 4 : 2;
+    rb_param_nudge(which, param, delta * step);
+  } else {
+    uint8_t d = rebirth_focus - RB_FOCUS_DRUM_BASE;
+    if (d < rb_drum_count()) {
+      int v = (int)rb_drum_level(d) + delta * 4;
+      rb_set_drum_level(d, (uint8_t)constrain(v, 0, 127));
+    }
+  }
+  rebirth_ui_needs_redraw = true;
+}
+
 // ---------------------------------------------------------------- drawing
 
-static void rb_draw_knob(int x, int y, const char *label, uint16_t value, uint16_t maxv, uint16_t colour) {
-  M5.Display.drawRect(x, y, RB_KNOB_W - 8, RB_KNOB_H - 8, RB_GREY);
+static void rb_draw_knob(int x, int y, const char *label, uint16_t value, uint16_t maxv, uint16_t colour, bool focused) {
+  M5.Display.drawRect(x, y, RB_KNOB_W - 8, RB_KNOB_H - 8, focused ? RB_ORANGE : RB_GREY);
+  if (focused) M5.Display.drawRect(x + 1, y + 1, RB_KNOB_W - 10, RB_KNOB_H - 10, RB_ORANGE);
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(RB_GREY, BLACK);
   M5.Display.setCursor(x + 8, y + 6);
@@ -149,8 +213,9 @@ static void rb_draw_acid_panel(uint8_t which, int y) {
 
   for (uint8_t k = 0; k < RB_ACID_KNOB_COUNT; k++) {
     const RbKnob &kb = rbAcidKnobs[k];
+    bool focused = (rebirth_focus == which * RB_ACID_KNOB_COUNT + k);
     rb_draw_knob(kb.x, y + 26 + kb.y, kb.label,
-                 rb_param_value(which, kb.param), rb_param_max(kb.param), colour);
+                 rb_param_value(which, kb.param), rb_param_max(kb.param), colour, focused);
   }
 }
 
@@ -159,25 +224,35 @@ static void rb_draw_drum_panel(int y) {
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(RB_GREEN, BLACK);
   M5.Display.setCursor(14, y + 6);
-  M5.Display.print("DRUMS 808");
+  M5.Display.printf("DRUMS %s", rebirth_machine ? "909" : "808");
 
-  // Nine voices as a 5x2 grid of level cells; tapping one selects it for the
-  // step row below and auditions it.
-  for (uint8_t d = 0; d < rebirth338.drumCount(); d++) {
-    int cx = 12 + (d % 5) * 140;
-    int cy = y + 34 + (d / 5) * 80;
+  // Kit selector, so both machines share the one panel.
+  for (uint8_t m = 0; m < 2; m++) {
+    int mx = RB_W - 240 + m * 116;
+    uint16_t colour = (rebirth_machine == m) ? RB_ORANGE : RB_GREY;
+    M5.Display.drawRect(mx, y + 2, 108, 28, colour);
+    M5.Display.setTextColor(colour, BLACK);
+    M5.Display.setCursor(mx + 26, y + 8);
+    M5.Display.print(m ? "909" : "808");
+  }
+
+  // Voices as a 6-wide grid: tap the name to audition, the bar to set level.
+  for (uint8_t d = 0; d < rb_drum_count(); d++) {
+    int cx = 8 + (d % 6) * 118;
+    int cy = y + 36 + (d / 6) * 80;
     bool sel = (rebirth_sel == RB_SEL_DRUM_BASE + d);
+    bool focused = (rebirth_focus == RB_FOCUS_DRUM_BASE + d);
     uint16_t colour = sel ? RB_GREEN : RB_GREY;
 
-    M5.Display.drawRect(cx, cy, 132, 72, colour);
-    M5.Display.setTextColor(colour, BLACK);
-    M5.Display.setCursor(cx + 8, cy + 6);
-    M5.Display.print(rbDrumNames[d]);
+    M5.Display.drawRect(cx, cy, 112, 72, focused ? RB_ORANGE : colour);
+    M5.Display.setTextColor(focused ? RB_ORANGE : colour, BLACK);
+    M5.Display.setCursor(cx + 6, cy + 6);
+    M5.Display.print(rb_drum_name(d));
 
-    int lvl = rebirth338.drumLevel(d);
-    M5.Display.fillRect(cx + 6, cy + 40, 120, 22, BLACK);
-    M5.Display.drawRect(cx + 6, cy + 40, 120, 22, RB_GREY);
-    M5.Display.fillRect(cx + 8, cy + 42, (lvl * 116) / 127, 18, colour);
+    int lvl = rb_drum_level(d);
+    M5.Display.fillRect(cx + 6, cy + 42, 100, 22, BLACK);
+    M5.Display.drawRect(cx + 6, cy + 42, 100, 22, RB_GREY);
+    M5.Display.fillRect(cx + 8, cy + 44, (lvl * 96) / 127, 18, colour);
   }
 }
 
@@ -189,7 +264,7 @@ static void rb_draw_steps(int y) {
 
   if (rebirth_sel == RB_SEL_ACID_A) M5.Display.print("PATTERN: BASSLINE A");
   else if (rebirth_sel == RB_SEL_ACID_B) M5.Display.print("PATTERN: BASSLINE B");
-  else M5.Display.printf("PATTERN: %s", rbDrumNames[rebirth_sel - RB_SEL_DRUM_BASE]);
+  else M5.Display.printf("PATTERN: %s", rb_drum_name(rebirth_sel - RB_SEL_DRUM_BASE));
 
   bool isAcid = (rebirth_sel <= RB_SEL_ACID_B);
   if (isAcid) {
@@ -216,7 +291,7 @@ static void rb_draw_steps(int y) {
       if (rebirth_edit_mode == 1) marked = rebirth338.acidAccent(which, s);
       if (rebirth_edit_mode == 2) marked = rebirth338.acidSlide(which, s);
     } else {
-      on = rebirth338.drumStep(rebirth_sel - RB_SEL_DRUM_BASE, s);
+      on = rb_drum_step(rebirth_sel - RB_SEL_DRUM_BASE, s);
     }
 
     uint16_t colour = RB_GREY;
@@ -336,6 +411,7 @@ static void rb_handle_touch(int tx, int ty) {
         int value = (rel * maxv) / (barW - 4);
         if (value > maxv) value = maxv;
         rb_param_nudge(which, kb.param, value - (int)rb_param_value(which, kb.param));
+        rebirth_focus = which * RB_ACID_KNOB_COUNT + k;
         rebirth_ui_needs_redraw = true;
         return;
       }
@@ -346,21 +422,39 @@ static void rb_handle_touch(int tx, int ty) {
 
   // Drum voices
   if (ty >= RB_DRUM_Y && ty < RB_DRUM_Y + 200) {
-    for (uint8_t d = 0; d < rebirth338.drumCount(); d++) {
-      int cx = 12 + (d % 5) * 140;
-      int cy = RB_DRUM_Y + 34 + (d / 5) * 80;
-      if (tx < cx || tx >= cx + 132 || ty < cy || ty >= cy + 72) continue;
+    // Kit selector in the header strip
+    if (ty < RB_DRUM_Y + 32) {
+      for (uint8_t m = 0; m < 2; m++) {
+        int mx = RB_W - 240 + m * 116;
+        if (tx >= mx && tx < mx + 108) {
+          rebirth_machine = m;
+          // Selection and focus both index the kit, so pull them back in
+          // range rather than leaving them pointing past a shorter kit.
+          if (rebirth_sel >= RB_SEL_DRUM_BASE) rebirth_sel = RB_SEL_DRUM_BASE;
+          if (rebirth_focus >= rb_focus_count()) rebirth_focus = RB_FOCUS_DRUM_BASE;
+          rebirth_ui_needs_redraw = true;
+          return;
+        }
+      }
+      return;
+    }
 
-      if (ty >= cy + 40) {  // level bar
+    for (uint8_t d = 0; d < rb_drum_count(); d++) {
+      int cx = 8 + (d % 6) * 118;
+      int cy = RB_DRUM_Y + 36 + (d / 6) * 80;
+      if (tx < cx || tx >= cx + 112 || ty < cy || ty >= cy + 72) continue;
+
+      if (ty >= cy + 42) {  // level bar
         int rel = tx - (cx + 8);
         if (rel < 0) rel = 0;
-        int lvl = (rel * 127) / 116;
+        int lvl = (rel * 127) / 96;
         if (lvl > 127) lvl = 127;
-        rebirth338.setDrumLevel(d, (uint8_t)lvl);
+        rb_set_drum_level(d, (uint8_t)lvl);
       } else {
-        rebirth338.auditionDrum(d);
+        rb_audition_drum(d);
       }
       rebirth_sel = RB_SEL_DRUM_BASE + d;
+      rebirth_focus = RB_FOCUS_DRUM_BASE + d;
       rebirth_ui_needs_redraw = true;
       return;
     }
@@ -390,7 +484,7 @@ static void rb_handle_touch(int tx, int ty) {
       else if (rebirth_edit_mode == 2) rebirth338.toggleAcidSlide(which, s);
       else rebirth338.toggleAcidStep(which, s);
     } else {
-      rebirth338.toggleDrumStep(rebirth_sel - RB_SEL_DRUM_BASE, s);
+      rb_toggle_drum_step(rebirth_sel - RB_SEL_DRUM_BASE, s);
     }
     rebirth_ui_needs_redraw = true;
     return;
@@ -418,7 +512,7 @@ static void rebirth_ui_touch() {
 void rebirth_ui_apply_mode() {
   rebirth_ui_mode_changed = false;
   if (rebirth_ui_active) {
-    M5.Display.setRotation(0);  // portrait
+    M5.Display.setRotation(2);  // portrait, flipped end-for-end
     rebirth_ui_draw_all();
   } else {
     M5.Display.setRotation(1);  // back to the landscape machine

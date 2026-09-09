@@ -266,12 +266,159 @@ private:
   uint16_t pulseAge = 0;
 };
 
+// ------------------------------------------------------------- Drum909Voice
+// The 909's character versus the 808: a much shorter, sharper pitch sweep and
+// an audible click on the kick, a noisier and brighter snare, and metallic
+// rather than filtered-noise cymbals.
+class Drum909Voice {
+public:
+  enum Type : uint8_t { BD, SD, LOW_TOM, MID_TOM, HI_TOM, RIM, CLAP, CH, OH, CRASH, RIDE, TYPE_COUNT };
+
+  void begin(Type t) {
+    type = t;
+    lfsr = 0x1234u ^ (uint16_t)((uint16_t)t * 613u + 7u);
+  }
+
+  void trigger(uint8_t velocity) {
+    active = true;
+    vel = (float)velocity / 127.0f;
+    phase = phase2 = 0.0f;
+    age = 0;
+    ampEnv = 1.0f;
+    noiseEnv = 1.0f;
+    pulseIndex = 0;
+    pulseAge = 0;
+  }
+
+  int16_t render() {
+    if (!active) return 0;
+    float s;
+    switch (type) {
+      case BD:      s = renderKick(); break;
+      case SD:      s = renderSnare(); break;
+      case LOW_TOM: s = renderTom(100.0f, 65.0f, 0.0018f); break;
+      case MID_TOM: s = renderTom(150.0f, 95.0f, 0.0021f); break;
+      case HI_TOM:  s = renderTom(220.0f, 140.0f, 0.0025f); break;
+      case RIM:     s = renderRim(); break;
+      case CLAP:    s = renderClap(); break;
+      case CH:      s = renderCymbal(0.0030f, 0.0f); break;
+      case OH:      s = renderCymbal(0.00045f, 0.0f); break;
+      case CRASH:   s = renderCymbal(0.00016f, 0.35f); break;
+      case RIDE:    s = renderCymbal(0.00030f, 0.6f); break;
+      default:      s = 0.0f; break;
+    }
+    age++;
+    if (ampEnv <= 0.0008f) active = false;
+    return (int16_t)constrain((long)s, -32000L, 32000L);
+  }
+
+private:
+  uint16_t nextNoise() {
+    lfsr ^= lfsr << 7;
+    lfsr ^= lfsr >> 9;
+    lfsr ^= lfsr << 8;
+    return lfsr;
+  }
+
+  float renderKick() {
+    // Tighter sweep than the 808 and a hard click at the very start.
+    float pitchHz = 48.0f + 90.0f * expf(-(float)age * 0.0075f);
+    phase += pitchHz / (float)SAMPLE_RATE;
+    if (phase >= 1.0f) phase -= 1.0f;
+    float tone = sinf(phase * 6.2831853f);
+    float click = (age < 30) ? (1.0f - (float)age / 30.0f) * 0.7f : 0.0f;
+    ampEnv -= ampEnv * 0.00105f;
+    return (tone + click) * ampEnv * vel * 17000.0f;
+  }
+
+  float renderSnare() {
+    phase += 238.0f / (float)SAMPLE_RATE;
+    if (phase >= 1.0f) phase -= 1.0f;
+    phase2 += 476.0f / (float)SAMPLE_RATE;
+    if (phase2 >= 1.0f) phase2 -= 1.0f;
+    float tone = sinf(phase * 6.2831853f) * 0.6f + sinf(phase2 * 6.2831853f) * 0.4f;
+    float noise = (float)(int16_t)nextNoise() / 32768.0f;
+    ampEnv -= ampEnv * 0.0030f;
+    noiseEnv -= noiseEnv * 0.0020f;  // noise outlasts the tone, unlike the 808
+    return (tone * ampEnv * 0.4f + noise * noiseEnv * 1.0f) * vel * 15000.0f;
+  }
+
+  float renderTom(float startHz, float endHz, float decayRate) {
+    float pitchHz = endHz + (startHz - endHz) * expf(-(float)age * 0.05f);
+    phase += pitchHz / (float)SAMPLE_RATE;
+    if (phase >= 1.0f) phase -= 1.0f;
+    float tone = sinf(phase * 6.2831853f);
+    float noise = (float)(int16_t)nextNoise() / 32768.0f;
+    ampEnv -= ampEnv * decayRate;
+    return (tone * 0.9f + noise * 0.1f) * ampEnv * vel * 13000.0f;
+  }
+
+  float renderRim() {
+    phase += 1700.0f / (float)SAMPLE_RATE;
+    if (phase >= 1.0f) phase -= 1.0f;
+    float tone = (phase < 0.5f) ? 1.0f : -1.0f;
+    float noise = (float)(int16_t)nextNoise() / 32768.0f;
+    ampEnv -= ampEnv * 0.035f;
+    return (tone * 0.5f + noise * 0.5f) * ampEnv * vel * 12000.0f;
+  }
+
+  float renderClap() {
+    const uint16_t pulseGap = (uint16_t)(SAMPLE_RATE * 0.009f);
+    if (pulseIndex < 3 && pulseAge > pulseGap) {
+      pulseIndex++;
+      pulseAge = 0;
+      ampEnv = 1.0f;
+    }
+    float noise = (float)(int16_t)nextNoise() / 32768.0f;
+    ampEnv -= ampEnv * ((pulseIndex < 3) ? 0.022f : 0.0026f);
+    pulseAge++;
+    return noise * ampEnv * vel * 14000.0f;
+  }
+
+  // Six detuned squares high-passed into metal. Ratios are stretched further
+  // apart than the 808's for the 909's brighter, longer cymbals; `tonal`
+  // mixes in a pitched partial so ride reads distinctly from crash.
+  float renderCymbal(float decayRate, float tonal) {
+    static const float ratios[6] = { 1.0f, 1.47f, 1.79f, 2.11f, 2.53f, 2.99f };
+    const float fundamental = 318.0f;
+    float mix = 0.0f;
+    for (uint8_t i = 0; i < 6; i++) {
+      hatPhase[i] += (fundamental * ratios[i]) / (float)SAMPLE_RATE;
+      if (hatPhase[i] >= 1.0f) hatPhase[i] -= 1.0f;
+      mix += (hatPhase[i] < 0.5f) ? 1.0f : -1.0f;
+    }
+    mix /= 6.0f;
+    hpState += (mix - hpState) * 0.55f;
+    float hp = mix - hpState;
+    if (tonal > 0.0f) {
+      phase2 += 1050.0f / (float)SAMPLE_RATE;
+      if (phase2 >= 1.0f) phase2 -= 1.0f;
+      hp = hp * (1.0f - tonal) + sinf(phase2 * 6.2831853f) * tonal;
+    }
+    ampEnv -= ampEnv * decayRate;
+    return hp * ampEnv * vel * 10000.0f;
+  }
+
+  Type type = BD;
+  bool active = false;
+  float vel = 1.0f;
+  float phase = 0.0f, phase2 = 0.0f;
+  float hatPhase[6] = { 0, 0, 0, 0, 0, 0 };
+  float hpState = 0.0f;
+  float ampEnv = 0.0f, noiseEnv = 0.0f;
+  uint16_t lfsr = 0x1234u;
+  uint32_t age = 0;
+  uint8_t pulseIndex = 0;
+  uint16_t pulseAge = 0;
+};
+
 // ------------------------------------------------------------ Rebirth338Engine
 class Rebirth338Engine {
 public:
   static const uint8_t ACID_A_CHANNEL = 3;
   static const uint8_t ACID_B_CHANNEL = 4;
-  static const uint8_t DRUM_CHANNEL = 10;
+  static const uint8_t DRUM_CHANNEL = 10;     // 808 kit, GM-style drum notes
+  static const uint8_t DRUM909_CHANNEL = 11;  // 909 kit, same note map
 
   void begin() {
     acidA.begin();
@@ -280,6 +427,9 @@ public:
     acidB.setWave(Acid303Voice::WAVE_SQUARE);
     for (uint8_t i = 0; i < Drum808Voice::TYPE_COUNT; i++) {
       drums[i].begin((Drum808Voice::Type)i);
+    }
+    for (uint8_t i = 0; i < Drum909Voice::TYPE_COUNT; i++) {
+      drums909[i].begin((Drum909Voice::Type)i);
     }
     seedDemoPattern();
   }
@@ -294,6 +444,9 @@ public:
     for (uint8_t d = 0; d < Drum808Voice::TYPE_COUNT; d++) {
       if (bitRead(patDrum[d], step)) drums[d].trigger(drumLevels[d]);
     }
+    for (uint8_t d = 0; d < Drum909Voice::TYPE_COUNT; d++) {
+      if (bitRead(patDrum909[d], step)) drums909[d].trigger(drumLevels909[d]);
+    }
   }
 
   // Called once per output sample from write_buffer(); sums straight into
@@ -302,6 +455,7 @@ public:
   void renderInto(int32_t &accL, int32_t &accR) {
     int32_t mix = acidA.render() + acidB.render();
     for (uint8_t d = 0; d < Drum808Voice::TYPE_COUNT; d++) mix += drums[d].render();
+    for (uint8_t d = 0; d < Drum909Voice::TYPE_COUNT; d++) mix += drums909[d].render();
     mix = (mix * (int32_t)masterLevel) >> 8;
     accL += mix;
     accR += mix;
@@ -312,6 +466,7 @@ public:
     if (channel == ACID_A_CHANNEL) acidA.noteOn(note, velocity >= 100, false);
     else if (channel == ACID_B_CHANNEL) acidB.noteOn(note, velocity >= 100, false);
     else if (channel == DRUM_CHANNEL) drumNoteOn(note, velocity);
+    else if (channel == DRUM909_CHANNEL) drum909NoteOn(note, velocity);
   }
 
   void noteOff(uint8_t channel, uint8_t note) {
@@ -340,6 +495,24 @@ public:
   Acid303Voice &acid(uint8_t which) { return which ? acidB : acidA; }
   Drum808Voice &drum(uint8_t d) { return drums[d < Drum808Voice::TYPE_COUNT ? d : 0]; }
   static uint8_t drumCount() { return Drum808Voice::TYPE_COUNT; }
+  static uint8_t drum909Count() { return Drum909Voice::TYPE_COUNT; }
+
+  // 909 kit, mirroring the 808 accessors above.
+  bool drum909Step(uint8_t d, uint8_t step) const {
+    return d < Drum909Voice::TYPE_COUNT ? bitRead(patDrum909[d], step & 15) : false;
+  }
+  void toggleDrum909Step(uint8_t d, uint8_t step) {
+    if (d >= Drum909Voice::TYPE_COUNT) return;
+    step &= 15;
+    bitWrite(patDrum909[d], step, !bitRead(patDrum909[d], step));
+  }
+  uint8_t drum909Level(uint8_t d) const { return d < Drum909Voice::TYPE_COUNT ? drumLevels909[d] : 0; }
+  void setDrum909Level(uint8_t d, uint8_t v) {
+    if (d < Drum909Voice::TYPE_COUNT) drumLevels909[d] = v;
+  }
+  void auditionDrum909(uint8_t d) {
+    if (d < Drum909Voice::TYPE_COUNT) drums909[d].trigger(drumLevels909[d]);
+  }
 
   // Acid step data: on/off, accent, slide and the note per step.
   bool acidStep(uint8_t which, uint8_t step) const { return bitRead(which ? patB : patA, step & 15); }
@@ -396,6 +569,33 @@ private:
     if (idx >= 0) drums[idx].trigger(velocity);
   }
 
+  void drum909NoteOn(uint8_t note, uint8_t velocity) {
+    int8_t idx = gmNoteToDrum909(note);
+    if (idx >= 0) drums909[idx].trigger(velocity);
+  }
+
+  static int8_t gmNoteToDrum909(uint8_t note) {
+    switch (note) {
+      case 36: return Drum909Voice::BD;
+      case 38:
+      case 40: return Drum909Voice::SD;
+      case 39: return Drum909Voice::CLAP;
+      case 37: return Drum909Voice::RIM;
+      case 41:
+      case 43: return Drum909Voice::LOW_TOM;
+      case 45:
+      case 47: return Drum909Voice::MID_TOM;
+      case 48:
+      case 50: return Drum909Voice::HI_TOM;
+      case 42:
+      case 44: return Drum909Voice::CH;
+      case 46: return Drum909Voice::OH;
+      case 49: return Drum909Voice::CRASH;
+      case 51: return Drum909Voice::RIDE;
+      default: return -1;
+    }
+  }
+
   static int8_t gmNoteToDrum(uint8_t note) {
     switch (note) {
       case 36: return Drum808Voice::KICK;
@@ -446,7 +646,13 @@ private:
   uint16_t patDrum[Drum808Voice::TYPE_COUNT] = { 0 };
   uint8_t drumLevels[Drum808Voice::TYPE_COUNT] = { 100, 100, 100, 100, 100, 100, 100, 100, 100 };
 
-  uint8_t masterLevel = 150;  // 0-255 mix trim into the master bus
+  Drum909Voice drums909[Drum909Voice::TYPE_COUNT];
+  uint16_t patDrum909[Drum909Voice::TYPE_COUNT] = { 0 };
+  uint8_t drumLevels909[Drum909Voice::TYPE_COUNT] = { 110, 110, 110, 110, 110, 110, 110, 110, 110, 110, 110 };
+
+  // Runs at full scale into the master bus; the bus soft-clips after this, and
+  // trimming here just made the whole engine sit quietly under the sampler.
+  uint8_t masterLevel = 255;
 };
 
 Rebirth338Engine rebirth338;

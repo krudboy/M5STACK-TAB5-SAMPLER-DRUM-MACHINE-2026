@@ -48,10 +48,19 @@
 #define HID_CONSUMER_VOL_UP 0xE9    // clockwise
 #define HID_CONSUMER_VOL_DOWN 0xEA  // counter-clockwise
 
+#define HID_CONSUMER_MUTE 0xE2  // a media knob's push-click
+#define HID_KEY_TAB 0x2B
+
 // Functions defined in the .ino translation units this header is used from.
 void select_rot();
 void do_rot();
 void synthESP32_TRIGGER_P(int nkey, int ppitch);
+
+// ReBirth mode state (rebirth_ui.h, included after this header).
+extern bool rebirth_ui_active;
+void rb_focus_advance();
+void rb_focus_adjust(int delta);
+
 void usb_keyboard_poll();  // defined in USB_tools.ino, driven by the USB host task
 void draw_hid_monitor();   // defined in LCD_tools.ino, drawn from the LCD task
 
@@ -92,6 +101,20 @@ static void usb_kbd_nudge(int delta) {
   old_counter1 = counter1;
   counter1 = counter1 + delta;
   do_rot();
+}
+
+// A knob detent, wherever it arrives from. In ReBirth mode it drives the
+// focused panel knob; otherwise it nudges the selected parameter of the
+// landscape UI.
+static void usb_kbd_encoder(int delta) {
+  if (rebirth_ui_active) rb_focus_adjust(delta);
+  else usb_kbd_nudge(delta);
+}
+
+// The knob's click advances which panel knob it's driving, so a macropad can
+// reach the whole ReBirth panel without touching the glass.
+static void usb_kbd_encoder_click() {
+  if (rebirth_ui_active) rb_focus_advance();
 }
 
 static void usb_kbd_select_track(uint8_t track) {
@@ -173,7 +196,13 @@ void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
   if (keycode == HID_CONSUMER_VOL_UP || keycode == HID_CONSUMER_VOL_DOWN) {
     int step = (keycode == HID_CONSUMER_VOL_UP) ? 1 : -1;
     if (shift) step *= 10;
-    usb_kbd_nudge(step);
+    usb_kbd_encoder(step);
+    return;
+  }
+
+  // Knob click, or Tab from a plain keyboard, steps the ReBirth focus along.
+  if (keycode == HID_CONSUMER_MUTE || keycode == HID_KEY_TAB) {
+    usb_kbd_encoder_click();
     return;
   }
 
@@ -208,8 +237,8 @@ void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
     case HID_KEY_RBRACKET:
       if (octave < 10) octave++;
       break;
-    case HID_KEY_UP: usb_kbd_nudge(1); break;
-    case HID_KEY_DOWN: usb_kbd_nudge(-1); break;
+    case HID_KEY_UP: usb_kbd_encoder(1); break;
+    case HID_KEY_DOWN: usb_kbd_encoder(-1); break;
     case HID_KEY_RIGHT: usb_kbd_nudge(10); break;
     case HID_KEY_LEFT: usb_kbd_nudge(-10); break;
     case HID_KEY_L:
@@ -265,14 +294,16 @@ void usb_consumer_handle_report(uint8_t iface, const uint8_t *data, uint8_t len)
 
   uint8_t usage = 0;
   for (uint8_t i = 0; i < len; i++) {
-    if (data[i] == HID_CONSUMER_VOL_UP || data[i] == HID_CONSUMER_VOL_DOWN) {
+    if (data[i] == HID_CONSUMER_VOL_UP || data[i] == HID_CONSUMER_VOL_DOWN ||
+        data[i] == HID_CONSUMER_MUTE) {
       usage = data[i];
       break;
     }
   }
 
   if (usage != 0 && previous[iface] == 0) {
-    usb_kbd_nudge(usage == HID_CONSUMER_VOL_UP ? 1 : -1);
+    if (usage == HID_CONSUMER_MUTE) usb_kbd_encoder_click();
+    else usb_kbd_encoder(usage == HID_CONSUMER_VOL_UP ? 1 : -1);
   }
   previous[iface] = usage;
 }
