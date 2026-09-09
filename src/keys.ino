@@ -524,6 +524,15 @@ void DO_KEYPAD(){
             case 50:
               learn_armed=!learn_armed;
               break;
+            // USB HID report monitor on/off
+            case 51:
+              usb_hid_monitor=!usb_hid_monitor;
+              if (usb_hid_monitor) {
+                refresh_hid_monitor=true;
+              } else {
+                M5.Display.fillRect(480, 200, 640, 100, BLACK);
+              }
+              break;
           }
 
         // shift 

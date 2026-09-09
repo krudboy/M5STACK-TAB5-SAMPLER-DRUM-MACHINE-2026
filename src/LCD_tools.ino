@@ -445,6 +445,11 @@ void REFRESH_KEYS() {
     if (learn_armed) {
       drawBT(50, ORANGE, "LEARN...");
     }
+    // USB HID report monitor
+    if (usb_hid_monitor) {
+      drawBT(51, ZCYAN, "USB KBD");
+      refresh_hid_monitor = true;
+    }
 
   }
 
@@ -1094,6 +1099,8 @@ void fillBPOS() {
 
   // MIDI / USB-keyboard learn, on the GLOBAL page
   mBoton[50] = new Boton(  160, 200, 160, 100, "LEARN",1);
+  // Raw USB HID report monitor (macropads, knobs, joysticks)
+  mBoton[51] = new Boton(  320, 200, 160, 100, "USB KBD",1);
 
   mBoton[46] = new Boton(  800, 200, 80, 100, "0",2);
   mBoton[47] = new Boton(  880, 200, 80, 100, "1",2); 
@@ -1163,6 +1170,42 @@ void fillBPOS() {
   mRot[43] = new Rot(  640, 200, 160,  50, "B LEVEL",       3,55, 2); // level 
   mRot[44] = new Rot(  640, 250, 160,  50, "B TYPE",        4,55, 2); // type 
 
+}
+
+// Raw USB HID report monitor, drawn to the right of the LEARN / USB KBD
+// buttons on the GLOBAL page. Shows what a macropad, knob or joystick is
+// actually sending so its reports can be mapped from real data rather than
+// guessed at.
+void draw_hid_monitor() {
+  const int px = 480, py = 200, pw = 640, ph = 100;
+
+  M5.Display.fillRect(px, py, pw, ph, BLACK);
+  M5.Display.drawRect(px, py, pw - 1, ph - 1, DARKGREY);
+  M5.Display.setTextSize(2);
+
+  // Status line: what's plugged in and how many reports we've seen.
+  M5.Display.setCursor(px + 6, py + 3);
+  M5.Display.setTextColor(ZCYAN, BLACK);
+  if (isMIDI) {
+    M5.Display.print("USB: MIDI device (no HID)");
+  } else if (hidIfaceCount > 0) {
+    M5.Display.printf("HID ifaces:%d  reports:%lu", hidIfaceCount, (unsigned long)hidReportCount);
+  } else {
+    M5.Display.print("USB: no HID device");
+  }
+
+  // Most recent reports, newest first, as raw hex.
+  M5.Display.setTextColor(ZYELLOW, BLACK);
+  for (uint8_t line = 0; line < HID_LOG_LINES; line++) {
+    if (hidLogLen[line] == 0) continue;
+    M5.Display.setCursor(px + 6, py + 22 + (line * 19));
+    M5.Display.printf("i%d", hidLogIface[line]);
+    for (uint8_t b = 0; b < hidLogLen[line] && b < 8; b++) {
+      M5.Display.printf(" %02x", hidLogBytes[line][b]);
+    }
+  }
+
+  M5.Display.setTextSize(2);
 }
 
 void refresh_shift_key(){

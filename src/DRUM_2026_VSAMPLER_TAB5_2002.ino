@@ -33,7 +33,7 @@ unsigned long lastCheck = 0;
 #define PIN_JACK 0x80  // Pin 7 (1 << 7)
 
 
-const int MAX_BUTTONS = 51;  // 50 = LEARN (MIDI/USB-keyboard learn)
+const int MAX_BUTTONS = 52;  // 50 = LEARN, 51 = USB KBD (HID report monitor)
 const int MAX_BARS = 45;
 
 Boton* mBoton[MAX_BUTTONS];
@@ -91,14 +91,32 @@ const size_t MIDI_IN_BUFFERS = 8;
 usb_transfer_t* MIDIIn[MIDI_IN_BUFFERS] = { NULL };
 usb_transfer_t* MIDIOut = NULL;
 
-///////////////////////////////////////////////////////////// USB HID KEYBOARD
-bool isKeyboard = false;
-bool isKeyboardReady = false;
-bool isKeyboardPolling = false;
-uint8_t KeyboardInterval = 10;         // report interval in ms, from the endpoint
-unsigned long KeyboardLastPoll = 0;
-const size_t KEYBOARD_IN_BUFFER_SIZE = 8;
-usb_transfer_t* KeyboardIn = NULL;
+///////////////////////////////////////////////////////////// USB HID (keyboard / macropad)
+// Macropads normally expose more than one HID interface: the keys on a boot
+// keyboard interface and the knob on a separate Consumer Control one. All HID
+// interfaces are claimed and polled so nothing is missed, and every report is
+// logged for the USB KBD monitor panel.
+#define MAX_HID_IFACES 4
+#define HID_IN_BUFFER_SIZE 16
+
+bool isKeyboard = false;  // at least one HID interface claimed
+uint8_t hidIfaceCount = 0;
+usb_transfer_t* HidIn[MAX_HID_IFACES] = { NULL, NULL, NULL, NULL };
+bool hidPolling[MAX_HID_IFACES] = { false, false, false, false };
+uint8_t hidInterval[MAX_HID_IFACES] = { 10, 10, 10, 10 };
+unsigned long hidLastPoll[MAX_HID_IFACES] = { 0, 0, 0, 0 };
+uint8_t hidIsBootKeyboard[MAX_HID_IFACES] = { 0, 0, 0, 0 };
+uint8_t hidIfaceNumber[MAX_HID_IFACES] = { 0, 0, 0, 0 };
+uint16_t hidPacketSize[MAX_HID_IFACES] = { 8, 8, 8, 8 };
+
+// USB KBD monitor: newest-first log of the most recent HID reports
+#define HID_LOG_LINES 4
+bool usb_hid_monitor = false;
+bool refresh_hid_monitor = false;
+uint8_t hidLogBytes[HID_LOG_LINES][HID_IN_BUFFER_SIZE];
+uint8_t hidLogLen[HID_LOG_LINES] = { 0, 0, 0, 0 };
+uint8_t hidLogIface[HID_LOG_LINES] = { 0, 0, 0, 0 };
+uint32_t hidReportCount = 0;
 
 // AKAI APC KEY25
 uint8_t pageRot = 0;  // maps 8 cc pot into pages
@@ -664,6 +682,11 @@ static void task_LCD(void* pvParameters) {
     }
 
     REFRESH_KEYS();
+
+    if (refresh_hid_monitor) {
+      refresh_hid_monitor = false;
+      if (usb_hid_monitor && rPage == 1) draw_hid_monitor();
+    }
 
     vTaskDelay(1);
   }

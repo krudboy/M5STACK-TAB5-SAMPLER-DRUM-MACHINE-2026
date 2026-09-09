@@ -48,6 +48,7 @@ void select_rot();
 void do_rot();
 void synthESP32_TRIGGER_P(int nkey, int ppitch);
 void usb_keyboard_poll();  // defined in USB_tools.ino, driven by the USB host task
+void draw_hid_monitor();   // defined in LCD_tools.ino, drawn from the LCD task
 
 // Semitone offset (0-23) for the piano keys, or -1 if the key isn't a note.
 static int8_t usb_kbd_note_offset(uint8_t keycode) {

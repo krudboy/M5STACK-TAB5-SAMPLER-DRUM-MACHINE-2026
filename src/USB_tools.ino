@@ -131,74 +131,118 @@ void prepare_endpoints(const void *p) {
   }
 }
 
-////////////////////////////////////////////////////////////////////////////// USB HID KEYBOARD
+////////////////////////////////////////////////////////////////////////////// USB HID (keyboard / macropad / joystick)
 
-// The Tab5 has one USB host port and we claim one interface, so a device is
-// either a MIDI controller or a keyboard — whichever turns up is claimed.
+// The Tab5 has one USB host port, so a device is either a MIDI controller or
+// an HID device. Unlike MIDI, HID devices often expose several interfaces at
+// once — a macropad typically puts its keys on a boot keyboard interface and
+// its knob on a Consumer Control one — so every HID interface is claimed and
+// polled rather than just the first.
 
-void keyboard_transfer_cb(usb_transfer_t *transfer) {
-  if (Device_Handle == transfer->device_handle) {
-    isKeyboardPolling = false;
-    if (transfer->status == 0) {
-      if (transfer->actual_num_bytes == 8) {
-        usb_kbd_handle_report(transfer->data_buffer);
-      }
-    } else if (transfer->status != USB_TRANSFER_STATUS_NO_DEVICE) {
-      ESP_LOGW("", "Keyboard transfer status %d", transfer->status);
+// Newest-first log of raw reports, for the USB KBD monitor panel.
+void hid_log_report(uint8_t iface, const uint8_t *data, uint8_t len) {
+  if (len > HID_IN_BUFFER_SIZE) len = HID_IN_BUFFER_SIZE;
+  for (int8_t l = HID_LOG_LINES - 1; l > 0; l--) {
+    memcpy(hidLogBytes[l], hidLogBytes[l - 1], HID_IN_BUFFER_SIZE);
+    hidLogLen[l] = hidLogLen[l - 1];
+    hidLogIface[l] = hidLogIface[l - 1];
+  }
+  memcpy(hidLogBytes[0], data, len);
+  hidLogLen[0] = len;
+  hidLogIface[0] = iface;
+  hidReportCount++;
+  refresh_hid_monitor = true;
+}
+
+void hid_transfer_cb(usb_transfer_t *transfer) {
+  if (Device_Handle != transfer->device_handle) return;
+
+  uint8_t idx = (uint8_t)(uintptr_t)transfer->context;
+  if (idx >= MAX_HID_IFACES) return;
+  hidPolling[idx] = false;
+
+  if (transfer->status != 0) {
+    if (transfer->status != USB_TRANSFER_STATUS_NO_DEVICE) {
+      ESP_LOGW("", "HID transfer iface %d status %d", idx, transfer->status);
     }
+    return;
+  }
+  if (transfer->actual_num_bytes == 0) return;
+
+  hid_log_report(idx, transfer->data_buffer, transfer->actual_num_bytes);
+
+  // Only boot keyboard reports have the fixed 8-byte modifier/keycode layout;
+  // anything else (knobs, joysticks) is logged for the monitor until we know
+  // what its reports actually look like.
+  if (hidIsBootKeyboard[idx] && transfer->actual_num_bytes == 8) {
+    usb_kbd_handle_report(transfer->data_buffer);
   }
 }
 
-void check_interface_desc_keyboard(const void *p) {
+// Claims an HID interface. Returns the slot index, or -1 if not claimed.
+int8_t check_interface_desc_hid(const void *p) {
   const usb_intf_desc_t *intf = (const usb_intf_desc_t *)p;
-  if ((intf->bInterfaceClass == USB_CLASS_HID) &&
-      (intf->bInterfaceSubClass == 1) &&   // boot interface
-      (intf->bInterfaceProtocol == 1))     // keyboard
-  {
-    isKeyboard = true;
-    ESP_LOGI("", "USB keyboard encontrado. Reclamando interfaz...");
-    esp_err_t err = usb_host_interface_claim(Client_Handle, Device_Handle,
-        intf->bInterfaceNumber, intf->bAlternateSetting);
-    if (err != ESP_OK) ESP_LOGE("", "usb_host_interface_claim (kbd) failed: %x", err);
+  if (intf->bInterfaceClass != USB_CLASS_HID) return -1;
+  if (hidIfaceCount >= MAX_HID_IFACES) return -1;
+
+  esp_err_t err = usb_host_interface_claim(Client_Handle, Device_Handle,
+      intf->bInterfaceNumber, intf->bAlternateSetting);
+  if (err != ESP_OK) {
+    ESP_LOGE("", "usb_host_interface_claim (hid) failed: %x", err);
+    return -1;
   }
+
+  uint8_t idx = hidIfaceCount++;
+  hidIfaceNumber[idx] = intf->bInterfaceNumber;
+  hidIsBootKeyboard[idx] = (intf->bInterfaceSubClass == 1 && intf->bInterfaceProtocol == 1);
+  isKeyboard = true;
+  ESP_LOGI("", "HID iface %d claimed (num %d, sub %d, proto %d)", idx,
+      intf->bInterfaceNumber, intf->bInterfaceSubClass, intf->bInterfaceProtocol);
+  return (int8_t)idx;
 }
 
-void prepare_endpoint_keyboard(const void *p) {
+void prepare_endpoint_hid(const void *p, uint8_t idx) {
   const usb_ep_desc_t *endpoint = (const usb_ep_desc_t *)p;
+  if (idx >= MAX_HID_IFACES || HidIn[idx] != NULL) return;
 
-  // HID boot keyboards report over an interrupt IN endpoint.
+  // HID devices report over an interrupt IN endpoint.
   if ((endpoint->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK) != USB_BM_ATTRIBUTES_XFER_INT) return;
   if (!(endpoint->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_DIR_MASK)) return;
 
-  esp_err_t err = usb_host_transfer_alloc(KEYBOARD_IN_BUFFER_SIZE, 0, &KeyboardIn);
+  uint16_t size = endpoint->wMaxPacketSize;
+  if (size > HID_IN_BUFFER_SIZE) size = HID_IN_BUFFER_SIZE;
+
+  esp_err_t err = usb_host_transfer_alloc(HID_IN_BUFFER_SIZE, 0, &HidIn[idx]);
   if (err != ESP_OK) {
-    KeyboardIn = NULL;
-    ESP_LOGE("", "usb_host_transfer_alloc (kbd) fail: %x", err);
+    HidIn[idx] = NULL;
+    ESP_LOGE("", "usb_host_transfer_alloc (hid) fail: %x", err);
     return;
   }
-  KeyboardIn->device_handle = Device_Handle;
-  KeyboardIn->bEndpointAddress = endpoint->bEndpointAddress;
-  KeyboardIn->callback = keyboard_transfer_cb;
-  KeyboardIn->context = NULL;
-  KeyboardInterval = endpoint->bInterval;
-  if (KeyboardInterval < 1) KeyboardInterval = 10;
-  isKeyboardReady = true;
-  ESP_LOGI("", "USB keyboard listo (interval %d ms)", KeyboardInterval);
+  HidIn[idx]->device_handle = Device_Handle;
+  HidIn[idx]->bEndpointAddress = endpoint->bEndpointAddress;
+  HidIn[idx]->callback = hid_transfer_cb;
+  HidIn[idx]->context = (void *)(uintptr_t)idx;
+  hidPacketSize[idx] = size;
+  hidInterval[idx] = endpoint->bInterval ? endpoint->bInterval : 10;
+  ESP_LOGI("", "HID iface %d ready (ep 0x%02x, %d bytes, %d ms)", idx,
+      endpoint->bEndpointAddress, size, hidInterval[idx]);
 }
 
 // Interrupt endpoints aren't self-resubmitting like the MIDI bulk IN buffers,
-// so the keyboard is polled from the USB host task at its report interval.
+// so each HID interface is polled from the USB host task at its own interval.
 void usb_keyboard_poll() {
-  if (!isKeyboardReady || isKeyboardPolling || KeyboardIn == NULL) return;
-  if ((millis() - KeyboardLastPoll) < KeyboardInterval) return;
+  for (uint8_t idx = 0; idx < hidIfaceCount; idx++) {
+    if (HidIn[idx] == NULL || hidPolling[idx]) continue;
+    if ((millis() - hidLastPoll[idx]) < hidInterval[idx]) continue;
 
-  KeyboardLastPoll = millis();
-  KeyboardIn->num_bytes = KEYBOARD_IN_BUFFER_SIZE;
-  esp_err_t err = usb_host_transfer_submit(KeyboardIn);
-  if (err == ESP_OK) {
-    isKeyboardPolling = true;
-  } else {
-    ESP_LOGW("", "usb_host_transfer_submit (kbd) fail: %x", err);
+    hidLastPoll[idx] = millis();
+    HidIn[idx]->num_bytes = hidPacketSize[idx];
+    esp_err_t err = usb_host_transfer_submit(HidIn[idx]);
+    if (err == ESP_OK) {
+      hidPolling[idx] = true;
+    } else {
+      ESP_LOGW("", "usb_host_transfer_submit (hid %d) fail: %x", idx, err);
+    }
   }
 }
 
@@ -206,20 +250,27 @@ void show_config_desc_full(const usb_config_desc_t *config_desc)
 {
   const uint8_t *p = &config_desc->val[0];
   uint8_t bLength;
+  int8_t currentHid = -1;  // HID slot the endpoints that follow belong to
   for (int i = 0; i < config_desc->wTotalLength; i+=bLength, p+=bLength) {
     bLength = *p;
     if ((i + bLength) <= config_desc->wTotalLength) {
       const uint8_t bDescriptorType = *(p + 1);
       switch (bDescriptorType) {
-        case USB_B_DESCRIPTOR_TYPE_INTERFACE:
-          if (!isMIDI) check_interface_desc_MIDI(p);
-          if (!isMIDI && !isKeyboard) check_interface_desc_keyboard(p);
+        case USB_B_DESCRIPTOR_TYPE_INTERFACE: {
+          const usb_intf_desc_t *intf = (const usb_intf_desc_t *)p;
+          currentHid = -1;
+          if (intf->bInterfaceClass == USB_CLASS_HID) {
+            currentHid = check_interface_desc_hid(p);
+          } else if (!isMIDI) {
+            check_interface_desc_MIDI(p);
+          }
           break;
+        }
         case USB_B_DESCRIPTOR_TYPE_ENDPOINT:
-          if (isMIDI && !isMIDIReady) {
+          if (currentHid >= 0) {
+            prepare_endpoint_hid(p, (uint8_t)currentHid);
+          } else if (isMIDI && !isMIDIReady) {
             prepare_endpoints(p);
-          } else if (isKeyboard && !isKeyboardReady) {
-            prepare_endpoint_keyboard(p);
           }
           break;
         default:
