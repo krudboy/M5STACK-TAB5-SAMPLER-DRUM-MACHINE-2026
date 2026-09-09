@@ -445,11 +445,9 @@ void REFRESH_KEYS() {
     if (learn_armed) {
       drawBT(50, ORANGE, "LEARN...");
     }
-    // USB HID report monitor
-    if (usb_hid_monitor) {
-      drawBT(51, ZCYAN, "USB KBD");
-      refresh_hid_monitor = true;
-    }
+    // USB HID report monitor (the status panel itself is always drawn)
+    if (usb_hid_monitor) drawBT(51, ZCYAN, "USB KBD");
+    refresh_hid_monitor = true;
 
   }
 
@@ -1172,37 +1170,82 @@ void fillBPOS() {
 
 }
 
-// Raw USB HID report monitor, drawn to the right of the LEARN / USB KBD
-// buttons on the GLOBAL page. Shows what a macropad, knob or joystick is
-// actually sending so its reports can be mapped from real data rather than
-// guessed at.
+// Short label for a BT_* connection state.
+static const char *bt_state_text(uint8_t state, const char *ready_word) {
+  switch (state) {
+    case BT_INIT: return "init";
+    case BT_READY: return ready_word;
+    case BT_LINKING: return "pairing";
+    case BT_CONNECTED: return "REGISTERED";
+    default: return "off";
+  }
+}
+
+static uint16_t bt_state_color(uint8_t state) {
+  switch (state) {
+    case BT_CONNECTED: return ZGREENALTER;
+    case BT_LINKING: return ORANGE;
+    case BT_READY: return ZYELLOW;
+    case BT_INIT: return DARKGREY;
+    default: return DARKGREY;
+  }
+}
+
+// Input status panel, to the right of the LEARN / USB KBD buttons on the
+// GLOBAL page: Bluetooth MIDI and Bluetooth keyboard link state plus what USB
+// is doing, and — with USB KBD toggled on — the raw HID reports coming in, so
+// a macropad, knob or joystick can be mapped from real captured data.
 void draw_hid_monitor() {
   const int px = 480, py = 200, pw = 640, ph = 100;
+  const unsigned long now = millis();
 
   M5.Display.fillRect(px, py, pw, ph, BLACK);
   M5.Display.drawRect(px, py, pw - 1, ph - 1, DARKGREY);
   M5.Display.setTextSize(2);
 
-  // Status line: what's plugged in and how many reports we've seen.
+  // --- Bluetooth line: MIDI peripheral + keyboard central ---
   M5.Display.setCursor(px + 6, py + 3);
-  M5.Display.setTextColor(ZCYAN, BLACK);
-  if (isMIDI) {
-    M5.Display.print("USB: MIDI device (no HID)");
-  } else if (hidIfaceCount > 0) {
-    M5.Display.printf("HID ifaces:%d  reports:%lu", hidIfaceCount, (unsigned long)hidReportCount);
-  } else {
-    M5.Display.print("USB: no HID device");
+  M5.Display.setTextColor(bt_state_color(bleMidiStatus), BLACK);
+  M5.Display.printf("BT MIDI:%s", bt_state_text(bleMidiStatus, "adv"));
+  // "RX" flashes for a moment after each message arrives
+  if (now - bleMidiLastRx < 400) {
+    M5.Display.setTextColor(ZCYAN, BLACK);
+    M5.Display.print(" RX");
+  }
+  M5.Display.setTextColor(bt_state_color(bleKbdStatus), BLACK);
+  M5.Display.printf("  KBD:%s", bt_state_text(bleKbdStatus, "scan"));
+  if (now - bleKbdLastRx < 400) {
+    M5.Display.setTextColor(ZCYAN, BLACK);
+    M5.Display.print(" RX");
   }
 
-  // Most recent reports, newest first, as raw hex.
-  M5.Display.setTextColor(ZYELLOW, BLACK);
-  for (uint8_t line = 0; line < HID_LOG_LINES; line++) {
-    if (hidLogLen[line] == 0) continue;
-    M5.Display.setCursor(px + 6, py + 22 + (line * 19));
-    M5.Display.printf("i%d", hidLogIface[line]);
-    for (uint8_t b = 0; b < hidLogLen[line] && b < 8; b++) {
-      M5.Display.printf(" %02x", hidLogBytes[line][b]);
+  // --- USB line ---
+  M5.Display.setCursor(px + 6, py + 22);
+  M5.Display.setTextColor(ZCYAN, BLACK);
+  if (isMIDI) {
+    M5.Display.printf("USB: MIDI %s", isMIDIReady ? "ready" : "claiming");
+  } else if (hidIfaceCount > 0) {
+    M5.Display.printf("USB: HID x%d  rx:%lu", hidIfaceCount, (unsigned long)hidReportCount);
+  } else {
+    M5.Display.print("USB: no device");
+  }
+
+  // --- Raw HID reports, newest first (USB KBD toggle) ---
+  if (usb_hid_monitor) {
+    M5.Display.setTextColor(ZYELLOW, BLACK);
+    for (uint8_t line = 0; line < 3; line++) {
+      if (hidLogLen[line] == 0) continue;
+      M5.Display.setCursor(px + 6, py + 44 + (line * 18));
+      M5.Display.printf("i%d", hidLogIface[line]);
+      for (uint8_t b = 0; b < hidLogLen[line] && b < 8; b++) {
+        M5.Display.printf(" %02x", hidLogBytes[line][b]);
+      }
     }
+  } else if (bleKbdName[0] || bleMidiPeer[0]) {
+    M5.Display.setTextColor(DARKGREY, BLACK);
+    M5.Display.setCursor(px + 6, py + 44);
+    if (bleKbdName[0]) M5.Display.printf("kbd:%s ", bleKbdName);
+    if (bleMidiPeer[0]) M5.Display.printf("midi:%s", bleMidiPeer);
   }
 
   M5.Display.setTextSize(2);

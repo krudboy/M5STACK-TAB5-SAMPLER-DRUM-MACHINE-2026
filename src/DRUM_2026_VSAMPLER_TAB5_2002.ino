@@ -109,6 +109,25 @@ uint8_t hidIsBootKeyboard[MAX_HID_IFACES] = { 0, 0, 0, 0 };
 uint8_t hidIfaceNumber[MAX_HID_IFACES] = { 0, 0, 0, 0 };
 uint16_t hidPacketSize[MAX_HID_IFACES] = { 8, 8, 8, 8 };
 
+///////////////////////////////////////////////////////////// BLUETOOTH STATUS
+// Shared by the BLE MIDI peripheral and the BLE HID keyboard central, and
+// rendered by the status panel on the GLOBAL page.
+#define BT_OFF 0        // not compiled in, or init failed
+#define BT_INIT 1       // bringing the stack up
+#define BT_READY 2      // advertising (MIDI) / scanning (keyboard)
+#define BT_LINKING 3    // found a device, connecting/pairing
+#define BT_CONNECTED 4  // registered and exchanging data
+
+uint8_t bleMidiStatus = BT_OFF;
+uint8_t bleKbdStatus = BT_OFF;
+uint32_t bleMidiRxCount = 0;
+uint32_t bleKbdRxCount = 0;
+unsigned long bleMidiLastRx = 0;
+unsigned long bleKbdLastRx = 0;
+char bleKbdName[24] = "";
+char bleMidiPeer[24] = "";
+bool refresh_bt_status = false;
+
 // USB KBD monitor: newest-first log of the most recent HID reports
 #define HID_LOG_LINES 4
 bool usb_hid_monitor = false;
@@ -590,7 +609,8 @@ uint8_t old_vol = 0;
 #include "midi_learn.h"     // MIDI CC / USB-key -> parameter learn + storage
 #include "usb_keyboard.h"   // USB HID boot keyboard: notes, transport, learn
 #include "rebirth338.h"     // dual acid-303 + 808 kit
-#include "ble_midi.h"       // Bluetooth MIDI (experimental, ESP-Hosted)
+#include "ble_midi.h"       // Bluetooth MIDI peripheral (experimental, ESP-Hosted)
+#include "ble_hid.h"        // Bluetooth keyboard central (HID-over-GATT)
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -683,9 +703,16 @@ static void task_LCD(void* pvParameters) {
 
     REFRESH_KEYS();
 
+    // Input status panel: repaint on demand, and on a slow tick so the BT/USB
+    // link state and the RX indicators stay current without a touch.
+    static unsigned long last_status_tick = 0;
+    if (millis() - last_status_tick > 250) {
+      last_status_tick = millis();
+      refresh_hid_monitor = true;
+    }
     if (refresh_hid_monitor) {
       refresh_hid_monitor = false;
-      if (usb_hid_monitor && rPage == 1) draw_hid_monitor();
+      if (rPage == 1) draw_hid_monitor();
     }
 
     vTaskDelay(1);
@@ -913,10 +940,12 @@ void setup() {
     &usbTaskHandle,
     0);
 
-  // BLUETOOTH MIDI (experimental, ESP-Hosted over the onboard ESP32-C6).
-  // Non-fatal by design: a failure here only disables BLE MIDI and logs it,
-  // it never blocks boot or the rest of the machine.
+  // BLUETOOTH (experimental, ESP-Hosted over the onboard ESP32-C6): a MIDI
+  // peripheral a phone/DAW can connect to, plus a central that connects out
+  // to BLE keyboards. Non-fatal by design — a failure here only disables
+  // Bluetooth and logs it, it never blocks boot or the rest of the machine.
   ble_midi_begin();
+  ble_hid_begin();
 
   // DISPLAY 2
 
@@ -997,6 +1026,10 @@ void loop() {
   M5.update();
 
   comprobar_jack();
+
+  // Connecting to a discovered BLE keyboard can't be done inside the scan
+  // callback, so it happens here.
+  ble_hid_task();
 
 }
 

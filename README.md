@@ -77,9 +77,27 @@ untouched.
   CC on channels 3/4: `74` cutoff, `71` resonance, `73` env mod, `72` decay,
   `91` accent amount.
 
-### Bluetooth MIDI (`src/ble_midi.h`) — experimental, parked
+### Input status panel
 
-**Currently parked — use USB MIDI.** The Tab5's
+The GLOBAL page shows a live panel (right of the LEARN / USB KBD buttons)
+with the state of every input path, so pairing and debugging don't need a
+serial console:
+
+- `BT MIDI: off / init / adv / pairing / REGISTERED` plus a flashing `RX`
+  whenever a message arrives
+- `KBD: off / init / scan / pairing / REGISTERED` for a Bluetooth keyboard,
+  with its own `RX`
+- `USB: MIDI ready` or `USB: HID x2 rx:1234` — interface count and report
+  total
+- With **USB KBD** toggled on, the raw HID report bytes underneath
+
+### Bluetooth MIDI (`src/ble_midi.h`) — experimental
+
+**Requires the platform pin in `platformio.ini` (55.03.35 or newer).** The
+hosted-BLE support only exists in arduino-esp32 **3.3.4+**; on 3.2.1 the BLE
+library is guarded on `SOC_BLE_SUPPORTED` alone, which is false on the
+radio-less ESP32-P4, so `BLEDevice` doesn't exist at all and Bluetooth cannot
+work no matter what sdkconfig says. The Tab5's
 ESP32-P4 application processor has **no radio of its own** — Bluetooth only
 exists via the onboard ESP32-C6 co-processor, bridged through Espressif's
 "ESP-Hosted" transport. Support for BLE over that bridge landed in

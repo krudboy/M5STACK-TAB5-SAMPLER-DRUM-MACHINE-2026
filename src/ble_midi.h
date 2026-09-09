@@ -48,14 +48,21 @@ static volatile bool bleMidiConnected = false;
 
 static void ble_midi_decode_and_dispatch(const uint8_t *data, size_t len);
 
+// Defined in USB_tools.ino: the shared MIDI entry point, so BLE MIDI gets the
+// same transport control, rotary-CC mapping and ReBirth338 routing as USB.
+void parse_midi_message(const uint8_t *p);
+
 class BleMidiServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *server) override {
     (void)server;
     bleMidiConnected = true;
+    bleMidiStatus = BT_CONNECTED;
     Serial.println("BLE MIDI: central connected");
   }
   void onDisconnect(BLEServer *server) override {
     bleMidiConnected = false;
+    bleMidiStatus = BT_READY;
+    bleMidiPeer[0] = 0;
     Serial.println("BLE MIDI: central disconnected, re-advertising");
     server->getAdvertising()->start();
   }
@@ -63,8 +70,11 @@ class BleMidiServerCallbacks : public BLEServerCallbacks {
 
 class BleMidiCharCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *chr) override {
-    std::string v = chr->getValue();
-    if (!v.empty()) ble_midi_decode_and_dispatch((const uint8_t *)v.data(), v.size());
+    String v = chr->getValue();
+    if (v.length() == 0) return;
+    bleMidiRxCount++;
+    bleMidiLastRx = millis();
+    ble_midi_decode_and_dispatch((const uint8_t *)v.c_str(), v.length());
   }
 };
 
@@ -117,12 +127,32 @@ static void ble_midi_decode_and_dispatch(const uint8_t *data, size_t len) {
   }
 }
 
+// SDIO link from the ESP32-P4 to the Tab5's ESP32-C6 radio co-processor.
+// These pins are board-specific — the ESP-Hosted defaults are for Espressif's
+// own P4 eval board — so they must be set before BLEDevice::init() or the
+// stack has no way to reach the radio. (Same mapping as WiFi.setPins() in
+// M5Stack's own Tab5 Wi-Fi docs.) GPIO 8-15 are dedicated to this link.
+#define TAB5_SDIO_CLK 12
+#define TAB5_SDIO_CMD 13
+#define TAB5_SDIO_D0 11
+#define TAB5_SDIO_D1 10
+#define TAB5_SDIO_D2 9
+#define TAB5_SDIO_D3 8
+#define TAB5_SDIO_RST 15
+
 void ble_midi_begin() {
-  Serial.println("BLE MIDI: starting (experimental ESP-Hosted transport)...");
+  Serial.println("BLE MIDI: starting (ESP-Hosted transport via the ESP32-C6)...");
+  bleMidiStatus = BT_INIT;
+
+#if defined(CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE)
+  BLEDevice::setPins(TAB5_SDIO_CLK, TAB5_SDIO_CMD, TAB5_SDIO_D0, TAB5_SDIO_D1,
+                     TAB5_SDIO_D2, TAB5_SDIO_D3, TAB5_SDIO_RST);
+#endif
 
   BLEDevice::init("WASABI338 TAB5");
   bleMidiServer = BLEDevice::createServer();
   if (bleMidiServer == nullptr) {
+    bleMidiStatus = BT_OFF;
     Serial.println("BLE MIDI: init failed, Bluetooth MIDI disabled (USB MIDI still works)");
     return;
   }
