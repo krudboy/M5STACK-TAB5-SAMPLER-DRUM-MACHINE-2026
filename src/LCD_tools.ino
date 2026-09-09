@@ -1224,14 +1224,28 @@ void analizarOnda(uint8_t type, int soundIndex) {
   int msc=MAX_SAMPLES_COUNT;
   if (type) msc=WT_COUNT;
 
+    // ROTvalue[16][20] and wavs[16] are per-voice, but setup() calls this
+    // across all samples (128) and all wavetables (44), so anything past
+    // voice 15 would read off the end of both — which produced a wild
+    // wtables[] pointer and a load fault at boot. Nothing to analyse for
+    // those slots, so cache the flat default and bail.
+    if (soundIndex < 0 || soundIndex >= MAX_SAMPLES_COUNT) return;
+    if (soundIndex >= 16) {
+        cacheMinVal[type][soundIndex] = -1; cacheMaxVal[type][soundIndex] = 1; return;
+    }
+
     int sampleIndex = ROTvalue[soundIndex][type];
-  
-    if (sampleIndex < 0 || sampleIndex >= msc) { 
-        cacheMinVal[type][soundIndex] = -1; cacheMaxVal[type][soundIndex] = 1; return; 
+
+    if (sampleIndex < 0 || sampleIndex >= msc) {
+        cacheMinVal[type][soundIndex] = -1; cacheMaxVal[type][soundIndex] = 1; return;
     }
     const int16_t* miSample;
     if (type) {
-       miSample= wtables[wavs[soundIndex]];
+       unsigned int wtIndex = wavs[soundIndex];
+       if (wtIndex >= WT_COUNT) {
+           cacheMinVal[type][soundIndex] = -1; cacheMaxVal[type][soundIndex] = 1; return;
+       }
+       miSample = wtables[wtIndex];
     } else {
        miSample = SAMPLES[sampleIndex];
     }
