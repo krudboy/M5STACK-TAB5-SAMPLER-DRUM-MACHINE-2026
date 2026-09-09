@@ -97,7 +97,8 @@ usb_transfer_t* MIDIOut = NULL;
 // interfaces are claimed and polled so nothing is missed, and every report is
 // logged for the USB KBD monitor panel.
 #define MAX_HID_IFACES 4
-#define HID_IN_BUFFER_SIZE 16
+#define HID_IN_BUFFER_SIZE 16  // bytes kept per report for the USB KBD monitor
+#define HID_MAX_PACKET 1024    // sanity ceiling on an endpoint's max packet size
 
 bool isKeyboard = false;  // at least one HID interface claimed
 uint8_t hidIfaceCount = 0;

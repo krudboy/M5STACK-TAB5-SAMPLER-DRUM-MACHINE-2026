@@ -205,10 +205,18 @@ void prepare_endpoint_hid(const void *p, uint8_t idx) {
   if ((endpoint->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK) != USB_BM_ATTRIBUTES_XFER_INT) return;
   if (!(endpoint->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_DIR_MASK)) return;
 
-  uint16_t size = endpoint->wMaxPacketSize;
-  if (size > HID_IN_BUFFER_SIZE) size = HID_IN_BUFFER_SIZE;
+  // An IN transfer's buffer must be at least the endpoint's max packet size,
+  // and num_bytes must be a whole multiple of it, or the USB host layer
+  // asserts and panics. So allocate exactly MPS and request exactly MPS —
+  // never clamp below it. (Clamping to a fixed 16 was what crashed on any
+  // keyboard whose endpoint reports 64.)
+  uint16_t mps = endpoint->wMaxPacketSize;
+  if (mps == 0 || mps > HID_MAX_PACKET) {
+    ESP_LOGW("", "HID iface %d: unusable max packet size %d, skipping", idx, mps);
+    return;
+  }
 
-  esp_err_t err = usb_host_transfer_alloc(HID_IN_BUFFER_SIZE, 0, &HidIn[idx]);
+  esp_err_t err = usb_host_transfer_alloc(mps, 0, &HidIn[idx]);
   if (err != ESP_OK) {
     HidIn[idx] = NULL;
     ESP_LOGE("", "usb_host_transfer_alloc (hid) fail: %x", err);
@@ -218,10 +226,10 @@ void prepare_endpoint_hid(const void *p, uint8_t idx) {
   HidIn[idx]->bEndpointAddress = endpoint->bEndpointAddress;
   HidIn[idx]->callback = hid_transfer_cb;
   HidIn[idx]->context = (void *)(uintptr_t)idx;
-  hidPacketSize[idx] = size;
+  hidPacketSize[idx] = mps;
   hidInterval[idx] = endpoint->bInterval ? endpoint->bInterval : 10;
-  ESP_LOGI("", "HID iface %d ready (ep 0x%02x, %d bytes, %d ms)", idx,
-      endpoint->bEndpointAddress, size, hidInterval[idx]);
+  ESP_LOGI("", "HID iface %d ready (ep 0x%02x, mps %d, %d ms)", idx,
+      endpoint->bEndpointAddress, mps, hidInterval[idx]);
 }
 
 // Interrupt endpoints aren't self-resubmitting like the MIDI bulk IN buffers,
