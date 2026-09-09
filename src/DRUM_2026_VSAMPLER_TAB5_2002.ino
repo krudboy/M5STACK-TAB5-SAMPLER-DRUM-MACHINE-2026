@@ -883,7 +883,7 @@ void setup() {
   //M5.Display.setFont(&fonts::Font2);
   M5.Display.setTextSize(2);
   init_colors();
-  M5.Display.fillScreen(TFT_BLACK);
+  draw_splash();
 
   // Load samples
   cargarWavsEnPSRAM();

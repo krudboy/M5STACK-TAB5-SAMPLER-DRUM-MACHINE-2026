@@ -55,6 +55,7 @@
 void select_rot();
 void do_rot();
 void synthESP32_TRIGGER_P(int nkey, int ppitch);
+void synthESP32_TRIGGER(int nkey);
 
 // ReBirth mode state (rebirth_ui.h, included after this header).
 extern bool rebirth_ui_active;
@@ -63,6 +64,36 @@ void rb_focus_adjust(int delta);
 
 void usb_keyboard_poll();  // defined in USB_tools.ino, driven by the USB host task
 void draw_hid_monitor();   // defined in LCD_tools.ino, drawn from the LCD task
+
+// Pad index (0-15) for a numeric keypad key, or -1.
+//
+// A 12-key macropad reports keypad usages, none of which appear in the piano
+// map below — which is why its keys were silent. Mapped to the pads so each
+// one plays its corresponding sample, exactly like the on-screen pads.
+// Deliberately keypad-only: the number row already carries the piano's upper
+// black keys, and taking those would cost more than it gained.
+static int8_t usb_kbd_pad_index(uint8_t keycode) {
+  switch (keycode) {
+    // numeric keypad, laid out so 1-9 land on pads 0-8
+    case 0x59: return 0;   // KP 1
+    case 0x5A: return 1;   // KP 2
+    case 0x5B: return 2;   // KP 3
+    case 0x5C: return 3;   // KP 4
+    case 0x5D: return 4;   // KP 5
+    case 0x5E: return 5;   // KP 6
+    case 0x5F: return 6;   // KP 7
+    case 0x60: return 7;   // KP 8
+    case 0x61: return 8;   // KP 9
+    case 0x62: return 9;   // KP 0
+    case 0x63: return 10;  // KP .
+    case 0x58: return 11;  // KP Enter
+    case 0x57: return 12;  // KP +
+    case 0x56: return 13;  // KP -
+    case 0x55: return 14;  // KP *
+    case 0x54: return 15;  // KP /
+    default: return -1;
+  }
+}
 
 // Semitone offset (0-23) for the piano keys, or -1 if the key isn't a note.
 static int8_t usb_kbd_note_offset(uint8_t keycode) {
@@ -212,6 +243,26 @@ void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
     selected_rot = learned;
     select_rot();
     refresh_sound_bars = true;
+    return;
+  }
+
+  // Macropad / numpad keys play their pad, matching the on-screen PAD mode:
+  // trigger the track, make it the selection, and write to the pattern when
+  // recording.
+  int8_t pad = usb_kbd_pad_index(keycode);
+  if (pad >= 0) {
+    synthESP32_TRIGGER(pad);
+    if (recording) {
+      bitWrite(pattern[pad], sstep, 1);
+      melodic[pad][sstep] = ROTvalue[pad][12];
+    }
+    selected_sound = pad;
+    if (selected_sound != oldselected_sound) {
+      oldselected_sound = selected_sound;
+      refreshSEQ = true;
+      select_rot();
+      refresh_sound_bars = true;
+    }
     return;
   }
 

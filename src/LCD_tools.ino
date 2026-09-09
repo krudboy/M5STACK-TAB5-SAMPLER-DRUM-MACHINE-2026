@@ -670,6 +670,33 @@ void REFRESH_KEYS() {
 }
 
 
+// Boot splash. Drawn before the sample load so the loading lines print
+// underneath it rather than over it.
+void draw_splash() {
+  const int screenW = M5.Display.width();
+
+  M5.Display.fillScreen(BLACK);
+
+  M5.Display.setTextSize(10);
+  M5.Display.setTextColor(ZGREENALTER, BLACK);
+  const char *title = "WASABI ACID";
+  int titleW = strlen(title) * 6 * 10;
+  M5.Display.setCursor((screenW - titleW) / 2, 150);
+  M5.Display.print(title);
+
+  M5.Display.setTextSize(3);
+  M5.Display.setTextColor(ORANGE, BLACK);
+  const char *sub = "WSB338 TAB5";
+  int subW = strlen(sub) * 6 * 3;
+  M5.Display.setCursor((screenW - subW) / 2, 260);
+  M5.Display.print(sub);
+
+  // Leave the cursor clear of the splash for the loading messages.
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(DARKGREY, BLACK);
+  M5.Display.setCursor(40, 360);
+}
+
 void drawScreen1_ONLY1() {
 
   // botones
