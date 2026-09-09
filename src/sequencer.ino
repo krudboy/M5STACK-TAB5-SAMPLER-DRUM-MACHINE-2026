@@ -18,8 +18,10 @@ void mySEQ() {
 
   // Lanzar cambio de step
   if (!(tick % (6))) {  //tic();
+    if (playing) rebirth338_onStep(sstep);
+
     // leer step actual de cada canal
-    for (int f = 0; f < 16; f++) { 
+    for (int f = 0; f < 16; f++) {
       if (!bitRead(mutes, f)) {
         if (solos == 0 || (solos > 0 && bitRead(solos, f))) {
           if (bitRead(pattern[f], sstep)) { // note on

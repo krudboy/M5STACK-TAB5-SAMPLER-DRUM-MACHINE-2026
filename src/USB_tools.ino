@@ -7,6 +7,10 @@
  * @param data2 Segundo byte de datos (ej. velocidad).
  */
 void send_midi_message(uint8_t status_byte, uint8_t channel, uint8_t data1, uint8_t data2) {
+  // Mirror every outgoing message to any connected Bluetooth MIDI central,
+  // independent of USB MIDI host state.
+  ble_midi_send(status_byte, channel, data1, data2);
+
   // Comprobar si el dispositivo MIDI está listo para enviar datos
   if (!isMIDIReady || MIDIOut == NULL) {
     return;
@@ -127,6 +131,77 @@ void prepare_endpoints(const void *p) {
   }
 }
 
+////////////////////////////////////////////////////////////////////////////// USB HID KEYBOARD
+
+// The Tab5 has one USB host port and we claim one interface, so a device is
+// either a MIDI controller or a keyboard — whichever turns up is claimed.
+
+void keyboard_transfer_cb(usb_transfer_t *transfer) {
+  if (Device_Handle == transfer->device_handle) {
+    isKeyboardPolling = false;
+    if (transfer->status == 0) {
+      if (transfer->actual_num_bytes == 8) {
+        usb_kbd_handle_report(transfer->data_buffer);
+      }
+    } else if (transfer->status != USB_TRANSFER_STATUS_NO_DEVICE) {
+      ESP_LOGW("", "Keyboard transfer status %d", transfer->status);
+    }
+  }
+}
+
+void check_interface_desc_keyboard(const void *p) {
+  const usb_intf_desc_t *intf = (const usb_intf_desc_t *)p;
+  if ((intf->bInterfaceClass == USB_CLASS_HID) &&
+      (intf->bInterfaceSubClass == 1) &&   // boot interface
+      (intf->bInterfaceProtocol == 1))     // keyboard
+  {
+    isKeyboard = true;
+    ESP_LOGI("", "USB keyboard encontrado. Reclamando interfaz...");
+    esp_err_t err = usb_host_interface_claim(Client_Handle, Device_Handle,
+        intf->bInterfaceNumber, intf->bAlternateSetting);
+    if (err != ESP_OK) ESP_LOGE("", "usb_host_interface_claim (kbd) failed: %x", err);
+  }
+}
+
+void prepare_endpoint_keyboard(const void *p) {
+  const usb_ep_desc_t *endpoint = (const usb_ep_desc_t *)p;
+
+  // HID boot keyboards report over an interrupt IN endpoint.
+  if ((endpoint->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK) != USB_BM_ATTRIBUTES_XFER_INT) return;
+  if (!(endpoint->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_DIR_MASK)) return;
+
+  esp_err_t err = usb_host_transfer_alloc(KEYBOARD_IN_BUFFER_SIZE, 0, &KeyboardIn);
+  if (err != ESP_OK) {
+    KeyboardIn = NULL;
+    ESP_LOGE("", "usb_host_transfer_alloc (kbd) fail: %x", err);
+    return;
+  }
+  KeyboardIn->device_handle = Device_Handle;
+  KeyboardIn->bEndpointAddress = endpoint->bEndpointAddress;
+  KeyboardIn->callback = keyboard_transfer_cb;
+  KeyboardIn->context = NULL;
+  KeyboardInterval = endpoint->bInterval;
+  if (KeyboardInterval < 1) KeyboardInterval = 10;
+  isKeyboardReady = true;
+  ESP_LOGI("", "USB keyboard listo (interval %d ms)", KeyboardInterval);
+}
+
+// Interrupt endpoints aren't self-resubmitting like the MIDI bulk IN buffers,
+// so the keyboard is polled from the USB host task at its report interval.
+void usb_keyboard_poll() {
+  if (!isKeyboardReady || isKeyboardPolling || KeyboardIn == NULL) return;
+  if ((millis() - KeyboardLastPoll) < KeyboardInterval) return;
+
+  KeyboardLastPoll = millis();
+  KeyboardIn->num_bytes = KEYBOARD_IN_BUFFER_SIZE;
+  esp_err_t err = usb_host_transfer_submit(KeyboardIn);
+  if (err == ESP_OK) {
+    isKeyboardPolling = true;
+  } else {
+    ESP_LOGW("", "usb_host_transfer_submit (kbd) fail: %x", err);
+  }
+}
+
 void show_config_desc_full(const usb_config_desc_t *config_desc)
 {
   const uint8_t *p = &config_desc->val[0];
@@ -138,10 +213,13 @@ void show_config_desc_full(const usb_config_desc_t *config_desc)
       switch (bDescriptorType) {
         case USB_B_DESCRIPTOR_TYPE_INTERFACE:
           if (!isMIDI) check_interface_desc_MIDI(p);
+          if (!isMIDI && !isKeyboard) check_interface_desc_keyboard(p);
           break;
         case USB_B_DESCRIPTOR_TYPE_ENDPOINT:
           if (isMIDI && !isMIDIReady) {
             prepare_endpoints(p);
+          } else if (isKeyboard && !isKeyboardReady) {
+            prepare_endpoint_keyboard(p);
           }
           break;
         default:
@@ -240,6 +318,12 @@ void parse_midi_message(const uint8_t* p) {
             // }
           }
 
+        } else if (channel == Rebirth338Engine::ACID_A_CHANNEL ||
+                   channel == Rebirth338Engine::ACID_B_CHANNEL ||
+                   channel == Rebirth338Engine::DRUM_CHANNEL) {
+          // ReBirth338: dedicated MIDI channels for the acid-303s / 808 kit,
+          // kept separate from the 16 sample/synth tracks below.
+          rebirth338_noteOn(channel, note, velocity);
         } else {
           //MIDI.sendNoteOn(note, 127, 1);
           //lastNotePlayed=note;
@@ -259,12 +343,16 @@ void parse_midi_message(const uint8_t* p) {
       uint8_t velocity = data2;
       //Serial.printf("Note OFF: Nota: %3d, Velocidad: %3d, Canal: %2d\n", note, velocity, channel);
 
-      if (channel==2) {
+      if (channel == Rebirth338Engine::ACID_A_CHANNEL ||
+          channel == Rebirth338Engine::ACID_B_CHANNEL ||
+          channel == Rebirth338Engine::DRUM_CHANNEL) {
+        rebirth338_noteOff(channel, note);
+      } else if (channel==2) {
         //MIDI.sendNoteOff(note, 0, 1);
       } else {
         if (note<8) {
-          //send_midi_message(0x90, channel, note, 3); // Turn oN YELLOW LED  
-        } 
+          //send_midi_message(0x90, channel, note, 3); // Turn oN YELLOW LED
+        }
       }
       break;
     }
@@ -272,6 +360,37 @@ void parse_midi_message(const uint8_t* p) {
     case 0x0B: { ////////////////////////////////////////////////////////// Control Change (CC)
       uint8_t controller = data1;
       uint8_t value = data2;
+
+      if (channel == Rebirth338Engine::ACID_A_CHANNEL ||
+          channel == Rebirth338Engine::ACID_B_CHANNEL) {
+        rebirth338_controlChange(channel, controller, value);
+        break;
+      }
+
+      // LEARN armed: the next CC that moves gets bound to the selected parameter.
+      if (learn_armed) {
+        learn_armed = false;
+        refreshMODES = true;
+        midi_learn_bind_cc(selected_rot, channel, controller);
+        break;
+      }
+
+      // A learned binding wins; anything unlearned falls through to the
+      // original fixed APC KEY25 page/CC mapping below.
+      int learned_rot = midi_learn_lookup_cc(channel, controller);
+      if (learned_rot >= 0) {
+        selected_rot = learned_rot;
+        select_rot();
+        old_counter1 = counter1;
+        counter1 = mapRounded(value, 0, 127, min_values[selected_rot], max_values[selected_rot]);
+        if (rPage != mRot[learned_rot]->rPage) {
+          rPage = mRot[learned_rot]->rPage;
+          refreshMODES = true;
+          refresh_rPage = true;
+        }
+        do_rot();
+        break;
+      }
 
       // Buscar controlador en los rot que correspondan a la página actual.
       for (int f = 0; f < MAX_BARS; f++) {
@@ -287,7 +406,7 @@ void parse_midi_message(const uint8_t* p) {
               refresh_rPage=true;
           }
           do_rot();
-          break;          
+          break;
         }
       }
 

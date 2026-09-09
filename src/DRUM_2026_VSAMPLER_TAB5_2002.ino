@@ -33,7 +33,7 @@ unsigned long lastCheck = 0;
 #define PIN_JACK 0x80  // Pin 7 (1 << 7)
 
 
-const int MAX_BUTTONS = 50;
+const int MAX_BUTTONS = 51;  // 50 = LEARN (MIDI/USB-keyboard learn)
 const int MAX_BARS = 45;
 
 Boton* mBoton[MAX_BUTTONS];
@@ -90,6 +90,15 @@ bool isMIDIReady = false;
 const size_t MIDI_IN_BUFFERS = 8;
 usb_transfer_t* MIDIIn[MIDI_IN_BUFFERS] = { NULL };
 usb_transfer_t* MIDIOut = NULL;
+
+///////////////////////////////////////////////////////////// USB HID KEYBOARD
+bool isKeyboard = false;
+bool isKeyboardReady = false;
+bool isKeyboardPolling = false;
+uint8_t KeyboardInterval = 10;         // report interval in ms, from the endpoint
+unsigned long KeyboardLastPoll = 0;
+const size_t KEYBOARD_IN_BUFFER_SIZE = 8;
+usb_transfer_t* KeyboardIn = NULL;
 
 // AKAI APC KEY25
 uint8_t pageRot = 0;  // maps 8 cc pot into pages
@@ -555,12 +564,23 @@ uint8_t old_vol = 0;
 #define MIDI_START 0xFA
 #define MIDI_STOP 0xFC
 
+////////////////////////////// WASABI338 ADDITIONS
+// Included here rather than with the includes at the top of the file because
+// these reference the globals declared above (selected_rot, counter1, octave,
+// the sequencer, ...).
+
+#include "midi_learn.h"     // MIDI CC / USB-key -> parameter learn + storage
+#include "usb_keyboard.h"   // USB HID boot keyboard: notes, transport, learn
+#include "rebirth338.h"     // dual acid-303 + 808 kit
+#include "ble_midi.h"       // Bluetooth MIDI (experimental, ESP-Hosted)
+
 //////////////////////////////////////////////////////////////////////////////////////////
 
 void usb_host_task_wrapper(void* pvParameters) {
 
   for (;;) {
     usbh_task();
+    usb_keyboard_poll();
   }
   // this code never runs
   vTaskDelete(NULL);
@@ -841,10 +861,16 @@ void setup() {
 
   synthESP32_setMFilter(master_filter);
 
+  // REBIRTH338 (dual acid-303 + 808 kit)
+  rebirth338_begin();
+
   // SPIFFS
   if (!SPIFFS.begin(true)) {
     Serial.println("Error al montar el sistema de archivos SPIFFS");
   }
+
+  // Learned MIDI CC / USB keyboard bindings (needs SPIFFS mounted)
+  midi_learn_begin();
 
   // not used
   //cargarDatos(); // Carga desde flash 16 memory (patterns + sounds)
@@ -863,6 +889,11 @@ void setup() {
     5,
     &usbTaskHandle,
     0);
+
+  // BLUETOOTH MIDI (experimental, ESP-Hosted over the onboard ESP32-C6).
+  // Non-fatal by design: a failure here only disables BLE MIDI and logs it,
+  // it never blocks boot or the rest of the machine.
+  ble_midi_begin();
 
   // DISPLAY 2
 

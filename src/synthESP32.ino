@@ -250,6 +250,10 @@ static void write_buffer() {
             }
           }
         }
+
+        // ReBirth338: dual acid-303 + 808 kit, mixed straight into the dry bus.
+        rebirth338_renderInto(DRUMTOTAL_L, DRUMTOTAL_R);
+
         // DRY
         DRUMTOTAL_L = soft_clip(DRUMTOTAL_L);
         DRUMTOTAL_R = soft_clip(DRUMTOTAL_R);

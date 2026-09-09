@@ -518,8 +518,13 @@ void DO_KEYPAD(){
               break;
             case 49:
               fx1=3;
-              break;              
-          }  
+              break;
+            // MIDI / USB-keyboard learn: arm, then move a knob or press a key
+            // to bind it to the selected parameter. Tap again to cancel.
+            case 50:
+              learn_armed=!learn_armed;
+              break;
+          }
 
         // shift 
                                   
@@ -560,9 +565,14 @@ void DO_KEYPAD(){
                 refreshPADSTEP=true;  
               }
               if (songing) recording=false; // in song mode cant save modified patterns. I would need a new flag. so much cpu time?
-              //refreshMODES=true;  
+              //refreshMODES=true;
               break;
-          }         
+            // SHIFT+LEARN clears whatever is bound to the selected parameter
+            case 50:
+              learn_armed=false;
+              midi_learn_clear(selected_rot);
+              break;
+          }
         }
       } else {
         switch (nkey){

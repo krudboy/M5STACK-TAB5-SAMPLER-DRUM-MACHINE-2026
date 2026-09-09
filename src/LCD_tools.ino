@@ -441,7 +441,11 @@ void REFRESH_KEYS() {
     if (songing) {
       drawBT(23, ZBLUE);
     }
- 
+    // MIDI / USB-keyboard learn: lit while waiting for a control to move
+    if (learn_armed) {
+      drawBT(50, ORANGE, "LEARN...");
+    }
+
   }
 
   if (clearPATTERNPADS) {
@@ -1088,7 +1092,10 @@ void fillBPOS() {
   mBoton[44] = new Boton(  160, 200, 160, 100, "DISTORTION",2); 
   mBoton[45] = new Boton(  480, 200, 160, 100, "BITCRUSHER",2); 
 
-  mBoton[46] = new Boton(  800, 200, 80, 100, "0",2); 
+  // MIDI / USB-keyboard learn, on the GLOBAL page
+  mBoton[50] = new Boton(  160, 200, 160, 100, "LEARN",1);
+
+  mBoton[46] = new Boton(  800, 200, 80, 100, "0",2);
   mBoton[47] = new Boton(  880, 200, 80, 100, "1",2); 
   mBoton[48] = new Boton(  960, 200, 80, 100, "2",2); 
   mBoton[49] = new Boton( 1040, 200, 80, 100, "3",2); 
