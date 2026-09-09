@@ -41,9 +41,22 @@ public:
   void setEnvMod(uint8_t v) { envMod = v; }                 // 0-127
   void setDecay(uint8_t v) { decay = v; }                   // 0-127 (higher = longer)
   void setAccentAmount(uint8_t v) { accentAmount = v; }     // 0-127
+  void setTune(int8_t semis) { tune = semis; }              // -24..+24
+
+  // Read-back for the on-screen panels.
+  Wave getWave() const { return wave; }
+  uint8_t getCutoff() const { return cutoffBase; }
+  uint8_t getResonance() const { return resonance; }
+  uint8_t getEnvMod() const { return envMod; }
+  uint8_t getDecay() const { return decay; }
+  uint8_t getAccentAmount() const { return accentAmount; }
+  int8_t getTune() const { return tune; }
 
   void noteOn(uint8_t note, bool accent, bool slide) {
-    float target = r338_noteToFreq(note);
+    int pitch = (int)note + tune;
+    if (pitch < 0) pitch = 0;
+    if (pitch > 127) pitch = 127;
+    float target = r338_noteToFreq((uint8_t)pitch);
     if (slide && gateOpen) {
       slideFrom = currentFreq;
       slideSamplesLeft = SLIDE_SAMPLES;
@@ -105,6 +118,7 @@ private:
   float ampEnv = 0.0f, filtEnv = 0.0f;
   bool gateOpen = false, accenting = false;
   uint8_t cutoffBase = 90, resonance = 160, envMod = 80, decay = 40, accentAmount = 90;
+  int8_t tune = 0;
 };
 
 // ------------------------------------------------------------- Drum808Voice
@@ -278,7 +292,7 @@ public:
     if (bitRead(patA, step)) acidA.noteOn(noteA[step], bitRead(accA, step), bitRead(slideA, step));
     if (bitRead(patB, step)) acidB.noteOn(noteB[step], bitRead(accB, step), bitRead(slideB, step));
     for (uint8_t d = 0; d < Drum808Voice::TYPE_COUNT; d++) {
-      if (bitRead(patDrum[d], step)) drums[d].trigger(100);
+      if (bitRead(patDrum[d], step)) drums[d].trigger(drumLevels[d]);
     }
   }
 
@@ -320,6 +334,61 @@ public:
       default: break;
     }
   }
+
+  // ---- API for the on-screen ReBirth panels (rebirth_ui.h) ----
+
+  Acid303Voice &acid(uint8_t which) { return which ? acidB : acidA; }
+  Drum808Voice &drum(uint8_t d) { return drums[d < Drum808Voice::TYPE_COUNT ? d : 0]; }
+  static uint8_t drumCount() { return Drum808Voice::TYPE_COUNT; }
+
+  // Acid step data: on/off, accent, slide and the note per step.
+  bool acidStep(uint8_t which, uint8_t step) const { return bitRead(which ? patB : patA, step & 15); }
+  bool acidAccent(uint8_t which, uint8_t step) const { return bitRead(which ? accB : accA, step & 15); }
+  bool acidSlide(uint8_t which, uint8_t step) const { return bitRead(which ? slideB : slideA, step & 15); }
+  uint8_t acidNote(uint8_t which, uint8_t step) const { return which ? noteB[step & 15] : noteA[step & 15]; }
+
+  void toggleAcidStep(uint8_t which, uint8_t step) {
+    uint16_t &pat = which ? patB : patA;
+    step &= 15;
+    bitWrite(pat, step, !bitRead(pat, step));
+  }
+  void toggleAcidAccent(uint8_t which, uint8_t step) {
+    uint16_t &acc = which ? accB : accA;
+    step &= 15;
+    bitWrite(acc, step, !bitRead(acc, step));
+  }
+  void toggleAcidSlide(uint8_t which, uint8_t step) {
+    uint16_t &sl = which ? slideB : slideA;
+    step &= 15;
+    bitWrite(sl, step, !bitRead(sl, step));
+  }
+  void setAcidNote(uint8_t which, uint8_t step, uint8_t note) {
+    if (which) noteB[step & 15] = note;
+    else noteA[step & 15] = note;
+  }
+
+  // Drum step data and per-voice mix, as on the 808's own front panel.
+  bool drumStep(uint8_t d, uint8_t step) const {
+    return d < Drum808Voice::TYPE_COUNT ? bitRead(patDrum[d], step & 15) : false;
+  }
+  void toggleDrumStep(uint8_t d, uint8_t step) {
+    if (d >= Drum808Voice::TYPE_COUNT) return;
+    step &= 15;
+    bitWrite(patDrum[d], step, !bitRead(patDrum[d], step));
+  }
+  uint8_t drumLevel(uint8_t d) const { return d < Drum808Voice::TYPE_COUNT ? drumLevels[d] : 0; }
+  void setDrumLevel(uint8_t d, uint8_t v) {
+    if (d < Drum808Voice::TYPE_COUNT) drumLevels[d] = v;
+  }
+  void auditionDrum(uint8_t d) {
+    if (d < Drum808Voice::TYPE_COUNT) drums[d].trigger(drumLevels[d]);
+  }
+  void auditionAcid(uint8_t which, uint8_t note) {
+    (which ? acidB : acidA).noteOn(note, false, false);
+  }
+
+  uint8_t masterLevelGet() const { return masterLevel; }
+  void masterLevelSet(uint8_t v) { masterLevel = v; }
 
 private:
   void drumNoteOn(uint8_t note, uint8_t velocity) {
@@ -375,6 +444,7 @@ private:
   uint16_t patB = 0, accB = 0, slideB = 0;
   uint8_t noteA[16] = { 0 }, noteB[16] = { 0 };
   uint16_t patDrum[Drum808Voice::TYPE_COUNT] = { 0 };
+  uint8_t drumLevels[Drum808Voice::TYPE_COUNT] = { 100, 100, 100, 100, 100, 100, 100, 100, 100 };
 
   uint8_t masterLevel = 150;  // 0-255 mix trim into the master bus
 };

@@ -591,6 +591,7 @@ uint8_t old_vol = 0;
 #include "midi_learn.h"     // MIDI CC / USB-key -> parameter learn + storage
 #include "usb_keyboard.h"   // USB HID boot keyboard: notes, transport, learn
 #include "rebirth338.h"     // dual acid-303 + 808 kit
+#include "rebirth_ui.h"     // portrait ReBirth front panel (hold SOUND)
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -607,6 +608,16 @@ void usb_host_task_wrapper(void* pvParameters) {
 static void task_LCD(void* pvParameters) {
 
   for (;;) {
+    // Entering or leaving ReBirth mode rotates the panel, so it has to happen
+    // here on the drawing task rather than from the touch handler.
+    if (rebirth_ui_mode_changed) rebirth_ui_apply_mode();
+
+    if (rebirth_ui_active) {
+      rebirth_ui_task();
+      vTaskDelay(1);
+      continue;
+    }
+
     REFRESH_PAGE();
     REFRESH_STATUS();
     showLastTouched();

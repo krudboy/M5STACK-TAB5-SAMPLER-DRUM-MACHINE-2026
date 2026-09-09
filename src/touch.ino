@@ -1,3 +1,32 @@
+// Holding the top-left SOUND button switches to the portrait ReBirth panel.
+// Tracked separately from the tap handling below so a short press keeps its
+// normal page-select behaviour.
+#define REBIRTH_HOLD_MS 800
+#define REBIRTH_HOLD_BUTTON 28  // SOUND, top-left
+
+static unsigned long rb_hold_start = 0;
+static bool rb_hold_fired = false;
+
+static void check_rebirth_hold(int x, int y) {
+  Boton *b = mBoton[REBIRTH_HOLD_BUTTON];
+  bool inside = (x > b->x) && (x < b->x + b->w) && (y > b->y) && (y < b->y + b->h);
+
+  if (!inside) {
+    rb_hold_start = 0;
+    rb_hold_fired = false;
+    return;
+  }
+  if (rb_hold_start == 0) {
+    rb_hold_start = millis();
+    return;
+  }
+  if (!rb_hold_fired && (millis() - rb_hold_start) >= REBIRTH_HOLD_MS) {
+    rb_hold_fired = true;
+    rebirth_ui_active = true;
+    rebirth_ui_mode_changed = true;
+  }
+}
+
 void read_touch(){
 
   // Lee 1 punto de toque “raw”
@@ -8,6 +37,8 @@ void read_touch(){
     M5.Display.convertRawXY(tp, n);
       cox=tp[0].x;
       coy=tp[0].y;
+
+    check_rebirth_hold(cox, coy);
 
       //  Serial.print(cox);
       //  Serial.print(" ");
@@ -76,6 +107,8 @@ void read_touch(){
 
   } else {
     touchActivo = false;
+    rb_hold_start = 0;
+    rb_hold_fired = false;
   }
 
 }
