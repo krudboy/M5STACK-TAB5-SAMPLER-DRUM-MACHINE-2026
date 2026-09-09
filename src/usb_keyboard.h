@@ -43,6 +43,11 @@
 
 #define HID_MOD_SHIFT 0x22  // left shift (0x02) | right shift (0x20)
 
+// Consumer Control usages, not keyboard keycodes: a media/volume knob sends
+// one of these per detent. Macropad knobs are almost always wired this way.
+#define HID_CONSUMER_VOL_UP 0xE9    // clockwise
+#define HID_CONSUMER_VOL_DOWN 0xEA  // counter-clockwise
+
 // Functions defined in the .ino translation units this header is used from.
 void select_rot();
 void do_rot();
@@ -162,6 +167,16 @@ void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
     return;
   }
 
+  // A media knob detent lands here if the device stuffs Consumer usages into
+  // the keyboard report rather than exposing a separate interface. Either way
+  // it drives the selected parameter as a relative encoder.
+  if (keycode == HID_CONSUMER_VOL_UP || keycode == HID_CONSUMER_VOL_DOWN) {
+    int step = (keycode == HID_CONSUMER_VOL_UP) ? 1 : -1;
+    if (shift) step *= 10;
+    usb_kbd_nudge(step);
+    return;
+  }
+
   // A learned key selects its parameter, ahead of the fixed map below.
   int learned = midi_learn_lookup_key(keycode);
   if (learned >= 0) {
@@ -237,4 +252,27 @@ void usb_kbd_handle_report(uint8_t iface, const uint8_t *report) {
   }
 
   memcpy(previous[iface], &report[2], 6);
+}
+
+// Consumer Control reports from a knob's own HID interface. The layout varies
+// between devices — some prefix a report ID, some send a 16-bit little-endian
+// usage — so rather than assume an offset, look for the usage anywhere in the
+// report. A detent is one 0 -> usage transition; the device sends a release
+// (an all-zero report) between detents, which is what separates them.
+void usb_consumer_handle_report(uint8_t iface, const uint8_t *data, uint8_t len) {
+  static uint8_t previous[MAX_HID_IFACES] = { 0 };
+  if (iface >= MAX_HID_IFACES) return;
+
+  uint8_t usage = 0;
+  for (uint8_t i = 0; i < len; i++) {
+    if (data[i] == HID_CONSUMER_VOL_UP || data[i] == HID_CONSUMER_VOL_DOWN) {
+      usage = data[i];
+      break;
+    }
+  }
+
+  if (usage != 0 && previous[iface] == 0) {
+    usb_kbd_nudge(usage == HID_CONSUMER_VOL_UP ? 1 : -1);
+  }
+  previous[iface] = usage;
 }

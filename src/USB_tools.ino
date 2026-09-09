@@ -168,10 +168,13 @@ void hid_transfer_cb(usb_transfer_t *transfer) {
     hid_log_report(idx, transfer->data_buffer, transfer->actual_num_bytes);
 
     // Only boot keyboard reports have the fixed 8-byte modifier/keycode
-    // layout; anything else (knobs, joysticks) is logged for the monitor
-    // until we know what its reports actually look like.
+    // layout. Anything else is treated as a Consumer Control interface (a
+    // media knob), and still logged raw for the monitor either way.
     if (hidIsBootKeyboard[idx] && transfer->actual_num_bytes == 8) {
       usb_kbd_handle_report(idx, transfer->data_buffer);
+    } else {
+      usb_consumer_handle_report(idx, transfer->data_buffer,
+                                 (uint8_t)transfer->actual_num_bytes);
     }
   }
 
