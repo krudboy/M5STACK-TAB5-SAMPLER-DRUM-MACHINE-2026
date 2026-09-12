@@ -207,18 +207,31 @@ void draw_pad_note_grid(byte f) {
   }
 
   // Brief border flash on the pad itself, the way a Maschine pad lights up.
+  // The armed melodic pad keeps a marker once the flash clears, so it's
+  // always visible which pad an external keyboard is playing.
+  uint16_t border = BLACK;
+  if (fresh) border = ZGREENALTER;
+  else if (f == melodic_pad) border = ZCYAN;
   M5.Display.drawRect(mBoton[f]->x + 5, mBoton[f]->y + 5,
-                      mBoton[f]->w - 11, mBoton[f]->h - 11,
-                      fresh ? ZGREENALTER : BLACK);
+                      mBoton[f]->w - 11, mBoton[f]->h - 11, border);
 }
 
 // Redraws only the pads whose flash is still live, plus any that just
 // changed, so this costs nothing while no notes are arriving.
 void refresh_pad_note_grids() {
   static bool pad_was_lit[16] = { false };
+  static uint8_t drawn_melodic_pad = 255;
+
+  // Moving the armed pad repaints the old and new one so the marker follows.
+  bool armed_moved = (drawn_melodic_pad != melodic_pad);
+  if (armed_moved) {
+    if (drawn_melodic_pad < 16) draw_pad_note_grid(drawn_melodic_pad);
+    drawn_melodic_pad = melodic_pad;
+  }
+
   for (byte f = 0; f < 16; f++) {
     bool fresh = (millis() - pad_flash_ms[f]) < PAD_FLASH_MS;
-    if (!fresh && !pad_was_lit[f]) continue;
+    if (!fresh && !pad_was_lit[f] && !(armed_moved && f == melodic_pad)) continue;
     draw_pad_note_grid(f);
     pad_was_lit[f] = fresh;
   }

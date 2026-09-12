@@ -119,10 +119,21 @@ uint16_t hidPacketSize[MAX_HID_IFACES] = { 8, 8, 8, 8 };
 bool live_play = false;
 uint8_t live_bank = 4;  // octave: keys play live_bank * 12 + semitone
 
+///////////////////////////////////////////////////////////// PAD LAYOUT
+// The two rows of pads are played differently over MIDI:
+//
+//   top row    (0-7)   melodic. Tap one to arm it, and an external keyboard
+//                      then plays that pad's sample chromatically.
+//   bottom row (8-15)  drums. Eight notes from DRUM_NOTE_BASE fire them as
+//                      one-shots at their own pitch, a pad each.
+#define DRUM_NOTE_BASE 36  // C1, where a GM kit starts
+#define DRUM_PAD_BASE 8
+
+uint8_t melodic_pad = 0;  // which top-row pad the keyboard is playing
+
 // Maschine-style pad feedback: an incoming MIDI note flashes the pad it lands
-// on, and each pad carries a 4x4 grid of 16 cells showing which note within
-// its range was last played. Notes walk across the pads chromatically, so a
-// scale lights them left to right and the grid cell shows the octave.
+// on, and each pad carries a 4x4 grid of 16 cells showing which note put it
+// there.
 uint8_t pad_note_cell[16];        // lit cell 0-15, 255 = none yet
 unsigned long pad_flash_ms[16];   // when that pad last received a note
 bool refresh_pad_notes = false;

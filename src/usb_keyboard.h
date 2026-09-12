@@ -226,6 +226,37 @@ static void usb_kbd_stop() {
   }
 }
 
+// Lights a pad and records which note put it there, for the 4x4 grid.
+static void pad_flash(uint8_t pad, uint8_t note) {
+  if (pad > 15) return;
+  pad_note_cell[pad] = note & 15;
+  pad_flash_ms[pad] = millis();
+  refresh_pad_notes = true;
+}
+
+// Routes an incoming MIDI note to the pad layout: the bottom row is a drum
+// zone fired as one-shots, one note per pad, and everything outside that zone
+// plays the armed melodic pad chromatically. Shared by every MIDI source so
+// the routing can't drift between them.
+void midi_play_note(uint8_t note) {
+  if (note >= DRUM_NOTE_BASE && note < DRUM_NOTE_BASE + 8) {
+    uint8_t pad = DRUM_PAD_BASE + (note - DRUM_NOTE_BASE);
+    synthESP32_TRIGGER(pad);
+    pad_flash(pad, note);
+    if (recording) {
+      bitWrite(pattern[pad], sstep, 1);
+      melodic[pad][sstep] = ROTvalue[pad][12];
+    }
+  } else {
+    synthESP32_TRIGGER_P(melodic_pad, note);
+    pad_flash(melodic_pad, note);
+    if (recording) {
+      bitWrite(pattern[melodic_pad], sstep, 1);
+      melodic[melodic_pad][sstep] = note;
+    }
+  }
+}
+
 // Plays a note on the selected sound, mirroring it out over MIDI when live.
 static void usb_kbd_play_pitch(int pitch) {
   if (pitch < 0) pitch = 0;

@@ -37,7 +37,12 @@ void DO_KEYPAD(){
             }
             //if (!shiftR1 && !shifting){
               selected_sound=nkey;
-              if (selected_sound!=oldselected_sound){          
+              // Tapping a top-row pad arms it for the keyboard: external MIDI
+              // then plays that pad's sample chromatically. The bottom row is
+              // the drum zone and is played a note per pad instead, so it
+              // doesn't change what the keyboard is holding.
+              if (nkey < DRUM_PAD_BASE) melodic_pad = nkey;
+              if (selected_sound!=oldselected_sound){
                 oldselected_sound=selected_sound;
                 refreshSEQ=true;
                 //setSound(nkey);
