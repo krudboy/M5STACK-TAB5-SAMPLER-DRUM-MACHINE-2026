@@ -56,6 +56,7 @@ void select_rot();
 void do_rot();
 void synthESP32_TRIGGER_P(int nkey, int ppitch);
 void synthESP32_TRIGGER(int nkey);
+void send_midi_message(uint8_t status_byte, uint8_t channel, uint8_t data1, uint8_t data2);
 
 // ReBirth mode state (rebirth_ui.h, included after this header).
 extern bool rebirth_ui_active;
@@ -138,8 +139,17 @@ static void usb_kbd_nudge(int delta) {
 // focused panel knob; otherwise it nudges the selected parameter of the
 // landscape UI.
 static void usb_kbd_encoder(int delta) {
-  if (rebirth_ui_active) rb_focus_adjust(delta);
-  else usb_kbd_nudge(delta);
+  if (rebirth_ui_active) {
+    rb_focus_adjust(delta);
+  } else if (live_play) {
+    // While playing live the knob is more useful moving the octave than
+    // editing whatever parameter happened to be selected.
+    int bank = (int)live_bank + delta;
+    live_bank = (uint8_t)constrain(bank, 0, 10);
+    refreshMODES = true;
+  } else {
+    usb_kbd_nudge(delta);
+  }
 }
 
 // The knob's click advances which panel knob it's driving, so a macropad can
@@ -246,10 +256,38 @@ void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
     return;
   }
 
-  // Macropad / numpad keys play their pad, matching the on-screen PAD mode:
-  // trigger the track, make it the selection, and write to the pattern when
-  // recording.
   int8_t pad = usb_kbd_pad_index(keycode);
+
+  // LIVE: the same keys play chromatic notes rather than pads. Twelve of them
+  // cover an octave, and the remaining four step the bank and the sound, so a
+  // 12-key macropad reaches the whole range without touching the screen.
+  if (live_play && pad >= 0) {
+    if (pad < 12) {
+      int pitch = live_bank * 12 + pad;
+      if (pitch > 127) pitch = 127;
+      synthESP32_TRIGGER_P(selected_sound, pitch);
+      // Mirror out so the machine can play other gear, not just itself.
+      send_midi_message(0x90, 1, (uint8_t)pitch, 100);
+      if (recording) {
+        bitWrite(pattern[selected_sound], sstep, 1);
+        melodic[selected_sound][sstep] = pitch;
+      }
+    } else if (pad == 12) {
+      if (live_bank < 10) live_bank++;
+    } else if (pad == 13) {
+      if (live_bank > 0) live_bank--;
+    } else if (pad == 14) {
+      usb_kbd_select_track((selected_sound + 1) & 15);
+    } else if (pad == 15) {
+      usb_kbd_select_track((selected_sound + 15) & 15);
+    }
+    refreshMODES = true;
+    return;
+  }
+
+  // Otherwise macropad / numpad keys play their pad, matching the on-screen
+  // PAD mode: trigger the track, make it the selection, and write to the
+  // pattern when recording.
   if (pad >= 0) {
     synthESP32_TRIGGER(pad);
     if (recording) {
@@ -271,6 +309,7 @@ void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
     int pitch = note + (12 * octave);
     if (pitch > 127) pitch = 127;
     synthESP32_TRIGGER_P(selected_sound, pitch);
+    if (live_play) send_midi_message(0x90, 1, (uint8_t)pitch, 100);
     if (recording) {
       bitWrite(pattern[selected_sound], sstep, 1);
       melodic[selected_sound][sstep] = pitch;

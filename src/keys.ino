@@ -524,6 +524,16 @@ void DO_KEYPAD(){
             case 50:
               learn_armed=!learn_armed;
               break;
+            // Live note play from USB keys / macropad. SHIFT resets the bank
+            // to the middle octave.
+            case 52:
+              if (shiftR1) {
+                live_bank=4;
+              } else {
+                live_play=!live_play;
+              }
+              refreshMODES=true;
+              break;
             // USB HID report monitor on/off
             case 51:
               usb_hid_monitor=!usb_hid_monitor;

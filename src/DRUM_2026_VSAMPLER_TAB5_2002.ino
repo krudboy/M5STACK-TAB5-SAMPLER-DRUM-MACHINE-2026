@@ -33,7 +33,7 @@ unsigned long lastCheck = 0;
 #define PIN_JACK 0x80  // Pin 7 (1 << 7)
 
 
-const int MAX_BUTTONS = 52;  // 50 = LEARN, 51 = USB KBD (HID report monitor)
+const int MAX_BUTTONS = 53;  // 50 = LEARN, 51 = USB KBD monitor, 52 = LIVE
 const int MAX_BARS = 45;
 
 Boton* mBoton[MAX_BUTTONS];
@@ -110,6 +110,14 @@ unsigned long hidLastPoll[MAX_HID_IFACES] = { 0, 0, 0, 0 };
 uint8_t hidIsBootKeyboard[MAX_HID_IFACES] = { 0, 0, 0, 0 };
 uint8_t hidIfaceNumber[MAX_HID_IFACES] = { 0, 0, 0, 0 };
 uint16_t hidPacketSize[MAX_HID_IFACES] = { 8, 8, 8, 8 };
+
+///////////////////////////////////////////////////////////// LIVE PLAY
+// With LIVE armed, USB keys and a macropad play chromatic notes instead of
+// selecting pads, and the notes are mirrored out over MIDI so the machine can
+// drive other gear. Banks step the playable octave, so a 12-key pad reaches
+// the whole range.
+bool live_play = false;
+uint8_t live_bank = 4;  // octave: keys play live_bank * 12 + semitone
 
 // USB KBD monitor: newest-first log of the most recent HID reports
 #define HID_LOG_LINES 4
