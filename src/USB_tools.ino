@@ -345,6 +345,11 @@ void parse_midi_message(const uint8_t* p) {
       uint8_t note = data1;
       uint8_t velocity = data2;
       if (velocity > 0) {
+        // The key map takes MIDI notes too, so a pad controller or keyboard
+        // is learned by playing it, exactly like a USB device. Consumes the
+        // note when mapping is armed or the note is bound; otherwise falls
+        // through to the behaviour below.
+        if (midi_note_run_action(note)) break;
         //Serial.printf("%3d, %3d, %2d\n", note, velocity, channel);  
 
         if (channel==1) {

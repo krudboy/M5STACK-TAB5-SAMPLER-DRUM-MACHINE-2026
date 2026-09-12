@@ -133,6 +133,12 @@ void midi_learn_clear(uint8_t rot) {
 static uint8_t key_action[KEYMAP_SIZE];
 static uint8_t key_action_arg[KEYMAP_SIZE];
 
+// The same actions, learnable from MIDI notes, so a pad controller or
+// keyboard maps exactly like a USB device does.
+#define NOTEMAP_SIZE 128
+static uint8_t note_action[NOTEMAP_SIZE];
+static uint8_t note_action_arg[NOTEMAP_SIZE];
+
 // Mapping mode: the target being assigned, shown on the KEYMAP button. Keys
 // bind to it and step to the next, so a whole pad can be mapped by playing
 // through it once.
@@ -178,6 +184,8 @@ static void keymap_target_name(uint8_t target, char *out, size_t len) {
 void keymap_reset() {
   memset(key_action, KEYACT_NONE, sizeof(key_action));
   memset(key_action_arg, 0, sizeof(key_action_arg));
+  memset(note_action, KEYACT_NONE, sizeof(note_action));
+  memset(note_action_arg, 0, sizeof(note_action_arg));
 }
 
 void keymap_save() {
@@ -188,6 +196,8 @@ void keymap_save() {
   }
   file.write(key_action, sizeof(key_action));
   file.write(key_action_arg, sizeof(key_action_arg));
+  file.write(note_action, sizeof(note_action));
+  file.write(note_action_arg, sizeof(note_action_arg));
   file.close();
 }
 
@@ -197,6 +207,10 @@ void keymap_load() {
   if (!file) return;
   file.read(key_action, sizeof(key_action));
   file.read(key_action_arg, sizeof(key_action_arg));
+  // A file written before note mapping existed simply stops here, leaving the
+  // note tables cleared, which reads as unmapped.
+  file.read(note_action, sizeof(note_action));
+  file.read(note_action_arg, sizeof(note_action_arg));
   file.close();
 }
 
@@ -207,6 +221,14 @@ void keymap_bind(uint8_t keycode, uint8_t act, uint8_t arg) {
   key_action_arg[keycode] = arg;
   keymap_save();
   Serial.printf("Key map: 0x%02x -> action %d arg %d\n", keycode, act, arg);
+}
+
+void keymap_bind_note(uint8_t note, uint8_t act, uint8_t arg) {
+  if (note >= NOTEMAP_SIZE) return;
+  note_action[note] = act;
+  note_action_arg[note] = arg;
+  keymap_save();
+  Serial.printf("Key map: MIDI note %d -> action %d arg %d\n", note, act, arg);
 }
 
 void midi_learn_begin() {

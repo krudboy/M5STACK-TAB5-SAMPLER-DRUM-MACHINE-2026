@@ -238,13 +238,9 @@ static void usb_kbd_play_pitch(int pitch) {
   }
 }
 
-// Runs a learned key binding. Returns false if the key has none, so the
-// caller can fall through to the built-in map.
-static bool usb_kbd_run_action(uint8_t keycode) {
-  uint8_t act = key_action[keycode];
-  if (act == KEYACT_NONE) return false;
-  uint8_t arg = key_action_arg[keycode];
 
+// Shared by the key and MIDI-note paths so both drive identical behaviour.
+static bool usb_kbd_do_action(uint8_t act, uint8_t arg) {
   switch (act) {
     case KEYACT_PAD:
       synthESP32_TRIGGER(arg);
@@ -271,6 +267,35 @@ static bool usb_kbd_run_action(uint8_t keycode) {
   }
   refreshMODES = true;
   return true;
+}
+
+// Runs a learned key binding. Returns false if the key has none, so the
+// caller can fall through to the built-in map.
+static bool usb_kbd_run_action(uint8_t keycode) {
+  uint8_t act = key_action[keycode];
+  if (act == KEYACT_NONE) return false;
+  return usb_kbd_do_action(act, key_action_arg[keycode]);
+}
+
+// An incoming MIDI note, offered to the map first. Returns false if the note
+// is unmapped so the caller falls back to playing it normally. Also consumes
+// the note while mapping is armed, so a controller can be learned by playing
+// it — same flow as a USB key.
+bool midi_note_run_action(uint8_t note) {
+  if (note >= NOTEMAP_SIZE) return false;
+
+  if (keymap_armed) {
+    uint8_t act, arg;
+    keymap_target_action(keymap_target, &act, &arg);
+    keymap_bind_note(note, act, arg);
+    keymap_target = (keymap_target + 1) % KEYMAP_TARGET_COUNT;
+    refreshMODES = true;
+    return true;
+  }
+
+  uint8_t act = note_action[note];
+  if (act == KEYACT_NONE) return false;
+  return usb_kbd_do_action(act, note_action_arg[note]);
 }
 
 void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {

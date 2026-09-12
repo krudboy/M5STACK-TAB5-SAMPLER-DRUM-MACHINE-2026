@@ -1,5 +1,6 @@
 {
     "chat.tools.terminal.autoApprove": {
         "platformio": true
-    }
+    },
+    "cmake.sourceDirectory": "C:/Users/KieranFerguson/Documents/PlatformIO/Projects/WSB338tab5/.dummy"
 }
