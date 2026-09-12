@@ -138,6 +138,31 @@ uint8_t pad_note_cell[16];        // lit cell 0-15, 255 = none yet
 unsigned long pad_flash_ms[16];   // when that pad last received a note
 bool refresh_pad_notes = false;
 
+///////////////////////////////////////////////////////////// CONNECTED DEVICE
+// What's on the USB host port, for the startup screen and status panel.
+//
+// Note on counting keys: a macropad's report descriptor almost always
+// declares a full 101-key keyboard regardless of how many keys it physically
+// has, so the descriptor can't tell us it's a 12-key pad. The honest count is
+// how many distinct keycodes have actually been seen, which fills in as the
+// pad is played or learned.
+uint16_t usb_vid = 0, usb_pid = 0;
+uint8_t hid_key_seen[32];      // bitmap of keycodes observed
+uint8_t hid_knob_seen[32];     // bitmap of consumer usages observed
+uint16_t hid_keys_count = 0;
+uint8_t hid_knobs_count = 0;
+
+static inline void hid_mark_key(uint8_t code) {
+  if (hid_key_seen[code >> 3] & (1 << (code & 7))) return;
+  hid_key_seen[code >> 3] |= (1 << (code & 7));
+  hid_keys_count++;
+}
+static inline void hid_mark_knob(uint8_t usage) {
+  if (hid_knob_seen[usage >> 3] & (1 << (usage & 7))) return;
+  hid_knob_seen[usage >> 3] |= (1 << (usage & 7));
+  hid_knobs_count++;
+}
+
 // Last MIDI note in, shown on the status panel so it's obvious whether notes
 // are arriving at all and on which channel.
 uint8_t last_midi_note = 255;
@@ -626,6 +651,7 @@ uint8_t old_vol = 0;
 #include "usb_keyboard.h"   // USB HID boot keyboard: notes, transport, learn
 #include "rebirth338.h"     // dual acid-303 + 808 kit
 #include "rebirth_ui.h"     // portrait ReBirth front panel (hold SOUND)
+#include "pad_page.h"       // pad/knob mapping page (hold a pad)
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -738,6 +764,11 @@ static void task_LCD(void* pvParameters) {
     if (refresh_hid_monitor) {
       refresh_hid_monitor = false;
       if (rPage == 1) draw_hid_monitor();
+    }
+
+    if (pad_page_active && pad_page_dirty) {
+      pad_page_dirty = false;
+      draw_pad_page();
     }
 
     // Pad note grids. Cheap to call every pass: it only draws pads whose
@@ -944,6 +975,7 @@ void setup() {
 
   // REBIRTH338 (dual acid-303 + 808 kit)
   rebirth338_begin();
+  pad_page_load();
 
   for (byte f = 0; f < 16; f++) {
     pad_note_cell[f] = 255;
@@ -976,6 +1008,15 @@ void setup() {
     &usbTaskHandle,
     0);
 
+
+  // Give the host task a moment to enumerate, then say what turned up on the
+  // splash before the main UI replaces it.
+  {
+    unsigned long wait_until = millis() + 1500;
+    while (millis() < wait_until && hidIfaceCount == 0 && !isMIDI) delay(50);
+    draw_splash_device();
+    delay(1400);
+  }
 
   // DISPLAY 2
 

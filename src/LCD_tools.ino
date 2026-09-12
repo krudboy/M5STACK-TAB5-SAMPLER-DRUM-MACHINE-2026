@@ -176,6 +176,152 @@ void show_all_bars(){
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// ---------------------------------------------------------------- pad page
+// Drawn over the page content area, so the pads and sequencer row underneath
+// stay visible and usable while mapping.
+#define PP_X 160
+#define PP_Y 0
+#define PP_W 960
+#define PP_H 300
+#define PP_CELL_W 110
+#define PP_CELL_H 62
+#define PP_GRID_X 176
+#define PP_GRID_Y 36
+#define PP_KNOB_X 640
+
+// Which key or note is bound to a pad, for display. Scans the maps rather
+// than keeping a reverse index, which would be another thing to keep in step.
+static void pp_binding_text(uint8_t pad, char *out, size_t len) {
+  for (int k = 0; k < KEYMAP_SIZE; k++) {
+    if (key_action[k] == KEYACT_PAD && key_action_arg[k] == pad) {
+      snprintf(out, len, "k%02x", k);
+      return;
+    }
+  }
+  for (int n = 0; n < NOTEMAP_SIZE; n++) {
+    if (note_action[n] == KEYACT_PAD && note_action_arg[n] == pad) {
+      snprintf(out, len, "n%d", n);
+      return;
+    }
+  }
+  snprintf(out, len, "-");
+}
+
+void draw_pad_page() {
+  M5.Display.fillRect(PP_X, PP_Y, PP_W, PP_H, BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(ORANGE, BLACK);
+  M5.Display.setCursor(PP_X + 10, PP_Y + 8);
+  M5.Display.print("PAD PAGE");
+  M5.Display.setTextColor(DARKGREY, BLACK);
+  M5.Display.setCursor(PP_X + 150, PP_Y + 8);
+  M5.Display.print("tap a pad or knob to learn it");
+
+  // 4x4 pad grid on the left
+  for (uint8_t c = 0; c < 16; c++) {
+    int cx = PP_GRID_X + (c % 4) * (PP_CELL_W + 4);
+    int cy = PP_GRID_Y + (c / 4) * (PP_CELL_H + 4);
+    bool arming = (pad_page_learn_cell == (int8_t)c);
+    uint16_t colour = arming ? ORANGE : (c < DRUM_PAD_BASE ? ZCYAN : ZGREENALTER);
+
+    M5.Display.drawRect(cx, cy, PP_CELL_W, PP_CELL_H, colour);
+    M5.Display.setTextColor(colour, BLACK);
+    M5.Display.setCursor(cx + 6, cy + 6);
+    M5.Display.printf("%d", c);
+
+    char bind[12];
+    pp_binding_text(c, bind, sizeof(bind));
+    M5.Display.setTextColor(arming ? ORANGE : DARKGREY, BLACK);
+    M5.Display.setCursor(cx + 6, cy + 34);
+    M5.Display.print(arming ? "press.." : bind);
+  }
+
+  // Three knobs on the right, each showing its current slot and target
+  for (uint8_t k = 0; k < PAD_KNOBS; k++) {
+    int kx = PP_KNOB_X + 10;
+    int ky = PP_GRID_Y + k * 88;
+    bool arming = (pad_page_learn_knob == (int8_t)k);
+    uint16_t colour = arming ? ORANGE : ZYELLOW;
+
+    M5.Display.drawRect(kx, ky, 450, 80, colour);
+    M5.Display.setTextColor(colour, BLACK);
+    M5.Display.setCursor(kx + 8, ky + 6);
+    M5.Display.printf("KNOB %d", k + 1);
+
+    if (arming) {
+      static const char *stages[3] = { "turn CW", "turn CCW", "click" };
+      M5.Display.setTextColor(ORANGE, BLACK);
+      M5.Display.setCursor(kx + 110, ky + 6);
+      M5.Display.print(stages[pad_page_learn_stage]);
+    } else {
+      M5.Display.setTextColor(DARKGREY, BLACK);
+      M5.Display.setCursor(kx + 110, ky + 6);
+      M5.Display.printf("cw %02x  ccw %02x  clk %02x", knob_cw[k], knob_ccw[k], knob_click[k]);
+    }
+
+    // Four slots; the lit one is what the knob is turning right now.
+    for (uint8_t s = 0; s < KNOB_SLOTS; s++) {
+      int sx = kx + 8 + s * 110;
+      int sy = ky + 32;
+      bool live = (knob_slot[k] == s);
+      uint16_t sc = live ? ZGREENALTER : DARKGREY;
+      M5.Display.drawRect(sx, sy, 104, 40, sc);
+      M5.Display.setTextColor(sc, BLACK);
+      M5.Display.setCursor(sx + 6, sy + 6);
+      uint8_t target = knob_param[k][s];
+      M5.Display.print(target < MAX_BARS ? mRot[target]->text : "-");
+      M5.Display.setCursor(sx + 6, sy + 22);
+      M5.Display.printf("slot %d", s + 1);
+    }
+  }
+}
+
+// Returns true if the touch was inside the page and handled.
+bool pad_page_touch(int tx, int ty) {
+  if (tx < PP_X || tx >= PP_X + PP_W || ty < PP_Y || ty >= PP_Y + PP_H) return false;
+
+  for (uint8_t c = 0; c < 16; c++) {
+    int cx = PP_GRID_X + (c % 4) * (PP_CELL_W + 4);
+    int cy = PP_GRID_Y + (c / 4) * (PP_CELL_H + 4);
+    if (tx >= cx && tx < cx + PP_CELL_W && ty >= cy && ty < cy + PP_CELL_H) {
+      pad_page_learn_cell = (pad_page_learn_cell == (int8_t)c) ? -1 : (int8_t)c;
+      pad_page_learn_knob = -1;
+      pad_page_dirty = true;
+      return true;
+    }
+  }
+
+  for (uint8_t k = 0; k < PAD_KNOBS; k++) {
+    int kx = PP_KNOB_X + 10;
+    int ky = PP_GRID_Y + k * 88;
+    if (tx < kx || tx >= kx + 450 || ty < ky || ty >= ky + 80) continue;
+
+    // Tapping a slot picks which of the four the knob is on; tapping the
+    // header arms the knob to learn its own turn and click usages.
+    if (ty >= ky + 32) {
+      uint8_t s = (tx - (kx + 8)) / 110;
+      if (s < KNOB_SLOTS) {
+        knob_slot[k] = s;
+        // With a slot selected, the rot selection follows it so the
+        // on-screen +/- buttons drive the same parameter as the knob.
+        uint8_t target = knob_param[k][s];
+        if (target < MAX_BARS) {
+          selected_rot = target;
+          select_rot();
+          refresh_sound_bars = true;
+        }
+      }
+    } else {
+      pad_page_learn_knob = (pad_page_learn_knob == (int8_t)k) ? -1 : (int8_t)k;
+      pad_page_learn_stage = 0;
+      pad_page_learn_cell = -1;
+    }
+    pad_page_dirty = true;
+    return true;
+  }
+  return true;  // inside the page, but not on a control
+}
+
 // Per-pad note grid, after Maschine: sixteen cells in 4x4 on the right of
 // each pad. The cell for the last note that landed here lights, brightly for
 // a moment after arrival then settling, so both the hit and the note that
@@ -769,6 +915,46 @@ void draw_splash() {
   M5.Display.setCursor(40, 360);
 }
 
+// Reports what turned up on the USB host port. Called from setup() after the
+// host task has had a moment to enumerate, so the splash can say what's
+// plugged in before the main UI takes over.
+void draw_splash_device() {
+  const int y = 440;
+  M5.Display.fillRect(0, y, M5.Display.width(), 150, BLACK);
+  M5.Display.setTextSize(2);
+
+  if (isMIDI) {
+    M5.Display.setTextColor(ZCYAN, BLACK);
+    M5.Display.setCursor(40, y);
+    M5.Display.printf("USB MIDI  %04x:%04x", usb_vid, usb_pid);
+    return;
+  }
+  if (hidIfaceCount == 0) {
+    M5.Display.setTextColor(DARKGREY, BLACK);
+    M5.Display.setCursor(40, y);
+    M5.Display.print("USB: nothing connected");
+    return;
+  }
+
+  M5.Display.setTextColor(ZGREENALTER, BLACK);
+  M5.Display.setCursor(40, y);
+  M5.Display.printf("USB HID  %04x:%04x", usb_vid, usb_pid);
+
+  M5.Display.setTextColor(DARKGREY, BLACK);
+  for (uint8_t i = 0; i < hidIfaceCount; i++) {
+    M5.Display.setCursor(40, y + 26 + i * 22);
+    M5.Display.printf("iface %d  ep 0x%02x  %d bytes  %dms%s", i,
+                      HidIn[i] ? HidIn[i]->bEndpointAddress : 0, hidPacketSize[i],
+                      hidInterval[i], hidIsBootKeyboard[i] ? "  boot kbd" : "");
+  }
+
+  // A pad's descriptor claims a full keyboard whatever its real size, so the
+  // only honest count is what has actually been pressed.
+  M5.Display.setTextColor(ZYELLOW, BLACK);
+  M5.Display.setCursor(40, y + 26 + hidIfaceCount * 22 + 6);
+  M5.Display.printf("keys seen %d   knobs seen %d", hid_keys_count, hid_knobs_count);
+}
+
 void drawScreen1_ONLY1() {
 
   // botones
@@ -1290,7 +1476,8 @@ void draw_hid_monitor() {
   if (isMIDI) {
     M5.Display.printf("USB: MIDI %s", isMIDIReady ? "ready" : "claiming");
   } else if (hidIfaceCount > 0) {
-    M5.Display.printf("USB: HID x%d  rx:%lu", hidIfaceCount, (unsigned long)hidReportCount);
+    M5.Display.printf("HID%d k%d n%d rx%lu", hidIfaceCount, hid_keys_count,
+                      hid_knobs_count, (unsigned long)hidReportCount);
   } else {
     M5.Display.print("USB: no device");
   }

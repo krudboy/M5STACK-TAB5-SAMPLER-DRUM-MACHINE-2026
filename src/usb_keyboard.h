@@ -58,6 +58,11 @@ void synthESP32_TRIGGER_P(int nkey, int ppitch);
 void synthESP32_TRIGGER(int nkey);
 void send_midi_message(uint8_t status_byte, uint8_t channel, uint8_t data1, uint8_t data2);
 
+// Pad page state (pad_page.h, included after this header).
+extern bool pad_page_active;
+bool pad_page_handle_usage(uint8_t usage);
+bool pad_page_learn_input(uint8_t keycode, bool is_note);
+
 // ReBirth mode state (rebirth_ui.h, included after this header).
 extern bool rebirth_ui_active;
 void rb_focus_advance();
@@ -315,6 +320,9 @@ static bool usb_kbd_run_action(uint8_t keycode) {
 bool midi_note_run_action(uint8_t note) {
   if (note >= NOTEMAP_SIZE) return false;
 
+  // A pad cell armed on the pad page takes the next note played.
+  if (pad_page_learn_input(note, true)) return true;
+
   if (keymap_armed) {
     uint8_t act, arg;
     keymap_target_action(keymap_target, &act, &arg);
@@ -331,6 +339,13 @@ bool midi_note_run_action(uint8_t note) {
 
 void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
   bool shift = (modifiers & HID_MOD_SHIFT) != 0;
+
+  // A knob learned on the pad page owns its usages outright — turning it must
+  // not also read as a key press.
+  if (pad_page_handle_usage(keycode)) return;
+
+  // A pad cell armed on that page takes the next key pressed.
+  if (pad_page_learn_input(keycode, false)) return;
 
   // Mapping mode: the key just pressed takes the displayed target, then the
   // target steps on, so a whole macropad maps by playing through it once.
@@ -491,7 +506,10 @@ void usb_kbd_handle_report(uint8_t iface, const uint8_t *report) {
         break;
       }
     }
-    if (!was_held) usb_kbd_key_down(key, modifiers);
+    if (!was_held) {
+      hid_mark_key(key);
+      usb_kbd_key_down(key, modifiers);
+    }
   }
 
   memcpy(previous[iface], &report[2], 6);
@@ -534,7 +552,10 @@ void usb_hid_handle_generic(uint8_t iface, const uint8_t *data, uint8_t len) {
         break;
       }
     }
-    if (!was_held) usb_kbd_key_down(now[i], modifiers);
+    if (!was_held) {
+      hid_mark_key(now[i]);
+      usb_kbd_key_down(now[i], modifiers);
+    }
   }
 
   memcpy(previous[iface], now, sizeof(now));
@@ -559,8 +580,11 @@ void usb_consumer_handle_report(uint8_t iface, const uint8_t *data, uint8_t len)
   }
 
   if (usage != 0 && previous[iface] == 0) {
-    if (usage == HID_CONSUMER_MUTE) usb_kbd_encoder_click();
-    else usb_kbd_encoder(usage == HID_CONSUMER_VOL_UP ? 1 : -1);
+    hid_mark_knob(usage);
+    if (!pad_page_handle_usage(usage)) {
+      if (usage == HID_CONSUMER_MUTE) usb_kbd_encoder_click();
+      else usb_kbd_encoder(usage == HID_CONSUMER_VOL_UP ? 1 : -1);
+    }
   }
   previous[iface] = usage;
 }

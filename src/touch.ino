@@ -7,12 +7,30 @@
 static unsigned long rb_hold_start = 0;
 static bool rb_hold_fired = false;
 
-static void check_rebirth_hold(int x, int y) {
-  Boton *b = mBoton[REBIRTH_HOLD_BUTTON];
-  bool inside = (x > b->x) && (x < b->x + b->w) && (y > b->y) && (y < b->y + b->h);
+static int8_t rb_hold_target = -1;
 
-  if (!inside) {
-    rb_hold_start = 0;
+// Holding the top-left SOUND button opens the portrait ReBirth panel; holding
+// any pad opens the pad page. Tracked apart from the tap handling below so a
+// short press keeps its normal behaviour either way.
+static void check_rebirth_hold(int x, int y) {
+  int8_t target = -1;
+  for (int8_t f = 0; f < 16; f++) {
+    Boton *pb = mBoton[f];
+    if ((x > pb->x) && (x < pb->x + pb->w) && (y > pb->y) && (y < pb->y + pb->h)) {
+      target = f;
+      break;
+    }
+  }
+  if (target < 0) {
+    Boton *b = mBoton[REBIRTH_HOLD_BUTTON];
+    if ((x > b->x) && (x < b->x + b->w) && (y > b->y) && (y < b->y + b->h)) {
+      target = REBIRTH_HOLD_BUTTON;
+    }
+  }
+
+  if (target < 0 || target != rb_hold_target) {
+    rb_hold_target = target;
+    rb_hold_start = target < 0 ? 0 : millis();
     rb_hold_fired = false;
     return;
   }
@@ -22,8 +40,20 @@ static void check_rebirth_hold(int x, int y) {
   }
   if (!rb_hold_fired && (millis() - rb_hold_start) >= REBIRTH_HOLD_MS) {
     rb_hold_fired = true;
-    rebirth_ui_active = true;
-    rebirth_ui_mode_changed = true;
+    if (target == REBIRTH_HOLD_BUTTON) {
+      rebirth_ui_active = true;
+      rebirth_ui_mode_changed = true;
+    } else {
+      pad_page_active = !pad_page_active;
+      pad_page_dirty = true;
+      if (!pad_page_active) {
+        // Hand the area back to whatever page was showing.
+        old_rPage = -1;
+        refresh_rPage = true;
+        refreshMODES = true;
+        refresh_sound_bars = true;
+      }
+    }
   }
 }
 
@@ -43,6 +73,11 @@ void read_touch(){
       //  Serial.print(cox);
       //  Serial.print(" ");
       //  Serial.println(coy);
+
+    if (pad_page_active && !touchActivo) {
+      touchActivo = true;
+      if (pad_page_touch(cox, coy)) return;
+    }
 
     if (!touchActivo){
       touchActivo = true; 
@@ -109,6 +144,7 @@ void read_touch(){
     touchActivo = false;
     rb_hold_start = 0;
     rb_hold_fired = false;
+    rb_hold_target = -1;
   }
 
 }
