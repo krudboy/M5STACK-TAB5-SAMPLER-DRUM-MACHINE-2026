@@ -119,6 +119,14 @@ uint16_t hidPacketSize[MAX_HID_IFACES] = { 8, 8, 8, 8 };
 bool live_play = false;
 uint8_t live_bank = 4;  // octave: keys play live_bank * 12 + semitone
 
+// Maschine-style pad feedback: an incoming MIDI note flashes the pad it lands
+// on, and each pad carries a 4x4 grid of 16 cells showing which note within
+// its range was last played. Notes walk across the pads chromatically, so a
+// scale lights them left to right and the grid cell shows the octave.
+uint8_t pad_note_cell[16];        // lit cell 0-15, 255 = none yet
+unsigned long pad_flash_ms[16];   // when that pad last received a note
+bool refresh_pad_notes = false;
+
 // Last MIDI note in, shown on the status panel so it's obvious whether notes
 // are arriving at all and on which channel.
 uint8_t last_midi_note = 255;
@@ -721,6 +729,12 @@ static void task_LCD(void* pvParameters) {
       if (rPage == 1) draw_hid_monitor();
     }
 
+    // Pad note grids. Cheap to call every pass: it only draws pads whose
+    // flash is live or has just expired. The pads sit outside the
+    // page-switch area, so this is safe on any page.
+    refresh_pad_notes = false;
+    refresh_pad_note_grids();
+
     vTaskDelay(1);
   }
   // this code never runs
@@ -919,6 +933,11 @@ void setup() {
 
   // REBIRTH338 (dual acid-303 + 808 kit)
   rebirth338_begin();
+
+  for (byte f = 0; f < 16; f++) {
+    pad_note_cell[f] = 255;
+    pad_flash_ms[f] = 0;
+  }
 
   // SPIFFS
   if (!SPIFFS.begin(true)) {

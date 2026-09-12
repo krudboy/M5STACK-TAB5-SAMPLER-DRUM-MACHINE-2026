@@ -353,6 +353,15 @@ void parse_midi_message(const uint8_t* p) {
         last_midi_note_ch = channel;
         last_midi_note_ms = millis();
 
+        // Light the pad this note lands on: chromatic across the sixteen
+        // pads, with the 4x4 cell marking the octave it came from.
+        {
+          uint8_t pad_hit = note & 15;
+          pad_note_cell[pad_hit] = note >> 4;
+          pad_flash_ms[pad_hit] = millis();
+          refresh_pad_notes = true;
+        }
+
         if (midi_note_run_action(note)) break;
         //Serial.printf("%3d, %3d, %2d\n", note, velocity, channel);  
 

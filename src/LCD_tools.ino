@@ -176,6 +176,54 @@ void show_all_bars(){
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// Per-pad note grid, after Maschine: sixteen cells in 4x4 on the right of
+// each pad. The cell for the last note that landed here lights, brightly for
+// a moment after arrival then settling, so both the hit and the note that
+// caused it stay readable. Sits clear of the sound indicator and the
+// selection ticks already drawn on the pad.
+#define PAD_GRID_X 112
+#define PAD_GRID_Y 34
+#define PAD_GRID_CELL 8
+#define PAD_GRID_GAP 2
+#define PAD_FLASH_MS 180
+
+void draw_pad_note_grid(byte f) {
+  if (f > 15) return;
+  int gx = mBoton[f]->x + PAD_GRID_X;
+  int gy = mBoton[f]->y + PAD_GRID_Y;
+  bool fresh = (millis() - pad_flash_ms[f]) < PAD_FLASH_MS;
+  uint8_t lit = pad_note_cell[f];
+
+  for (uint8_t c = 0; c < 16; c++) {
+    int cx = gx + (c % 4) * (PAD_GRID_CELL + PAD_GRID_GAP);
+    int cy = gy + (c / 4) * (PAD_GRID_CELL + PAD_GRID_GAP);
+    uint16_t colour;
+    if (lit == c) {
+      colour = fresh ? ZGREENALTER : ZGREEN;
+    } else {
+      colour = OSCURO;
+    }
+    M5.Display.fillRect(cx, cy, PAD_GRID_CELL, PAD_GRID_CELL, colour);
+  }
+
+  // Brief border flash on the pad itself, the way a Maschine pad lights up.
+  M5.Display.drawRect(mBoton[f]->x + 5, mBoton[f]->y + 5,
+                      mBoton[f]->w - 11, mBoton[f]->h - 11,
+                      fresh ? ZGREENALTER : BLACK);
+}
+
+// Redraws only the pads whose flash is still live, plus any that just
+// changed, so this costs nothing while no notes are arriving.
+void refresh_pad_note_grids() {
+  static bool pad_was_lit[16] = { false };
+  for (byte f = 0; f < 16; f++) {
+    bool fresh = (millis() - pad_flash_ms[f]) < PAD_FLASH_MS;
+    if (!fresh && !pad_was_lit[f]) continue;
+    draw_pad_note_grid(f);
+    pad_was_lit[f] = fresh;
+  }
+}
+
 void drawPADsound(byte f, int color){
   M5.Display.fillRect(mBoton[f]->x + 68, mBoton[f]->y + 15, 24, 12, color);
 }
