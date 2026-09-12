@@ -216,6 +216,10 @@ void draw_pad_page() {
   M5.Display.setTextColor(DARKGREY, BLACK);
   M5.Display.setCursor(PP_X + 150, PP_Y + 8);
   M5.Display.print("tap a pad or knob to learn it");
+  M5.Display.drawRect(PP_X + PP_W - 110, PP_Y + 2, 100, 28, ORANGE);
+  M5.Display.setTextColor(ORANGE, BLACK);
+  M5.Display.setCursor(PP_X + PP_W - 80, PP_Y + 8);
+  M5.Display.print("EXIT");
 
   // 4x4 pad grid on the left
   for (uint8_t c = 0; c < 16; c++) {
@@ -279,6 +283,17 @@ void draw_pad_page() {
 // Returns true if the touch was inside the page and handled.
 bool pad_page_touch(int tx, int ty) {
   if (tx < PP_X || tx >= PP_X + PP_W || ty < PP_Y || ty >= PP_Y + PP_H) return false;
+
+  if (ty < PP_Y + 30 && tx >= PP_X + PP_W - 110) {
+    pad_page_active = false;
+    pad_page_learn_cell = -1;
+    pad_page_learn_knob = -1;
+    old_rPage = -1;  // hand the area back to whatever page was showing
+    refresh_rPage = true;
+    refreshMODES = true;
+    refresh_sound_bars = true;
+    return true;
+  }
 
   for (uint8_t c = 0; c < 16; c++) {
     int cx = PP_GRID_X + (c % 4) * (PP_CELL_W + 4);
@@ -658,6 +673,10 @@ void REFRESH_KEYS() {
       char lbl[12];
       snprintf(lbl, sizeof(lbl), "LIVE o%d", live_bank);
       drawBT(52, ZGREENALTER, lbl);
+    }
+    // Record: armed waits for the transport, recording is live
+    if (recording) {
+      drawBT(54, ZRED, playing ? "REC *" : "REC ARM");
     }
     // While mapping, the button shows the target the next key will take
     if (keymap_armed) {
@@ -1388,6 +1407,8 @@ void fillBPOS() {
   mBoton[52] = new Boton(  480, 200, 160, 100, "LIVE",1);
   // Map any macropad / keyboard key to an action
   mBoton[53] = new Boton(  640, 200, 160, 100, "KEYMAP",1);
+  // Live record: arm, then anything played is written into the pattern
+  mBoton[54] = new Boton(  800, 200, 160, 100, "REC",1);
 
   mBoton[46] = new Boton(  800, 200, 80, 100, "0",2);
   mBoton[47] = new Boton(  880, 200, 80, 100, "1",2); 
@@ -1464,7 +1485,7 @@ void fillBPOS() {
 // raw HID reports coming in, so a macropad, knob or joystick can be mapped
 // from real captured data rather than guesswork.
 void draw_hid_monitor() {
-  const int px = 800, py = 200, pw = 320, ph = 100;
+  const int px = 960, py = 200, pw = 160, ph = 100;
 
   M5.Display.fillRect(px, py, pw, ph, BLACK);
   M5.Display.drawRect(px, py, pw - 1, ph - 1, DARKGREY);

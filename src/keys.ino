@@ -24,6 +24,13 @@ void DO_KEYPAD(){
             break;          
           case tPad: // play pads
 
+            // SHIFT + pad opens the pad/knob mapping page for it.
+            if (shiftR1) {
+              pad_page_active = true;
+              pad_page_dirty = true;
+              break;
+            }
+
             synthESP32_TRIGGER(nkey);
 
 
@@ -528,6 +535,20 @@ void DO_KEYPAD(){
             // to bind it to the selected parameter. Tap again to cancel.
             case 50:
               learn_armed=!learn_armed;
+              break;
+            // Live record. Arms recording and rolls the transport, so one
+            // press is enough to start capturing rather than needing PLAY
+            // first. SHIFT clears the armed track's pattern before recording,
+            // which is what you usually want on a retake.
+            case 54:
+              if (shiftR1) {
+                pattern[live_play ? melodic_pad : selected_sound]=0;
+                refreshSEQ=true;
+                refreshPATTERN=true;
+              } else {
+                usb_kbd_toggle_record();
+              }
+              refreshMODES=true;
               break;
             // Live note play from USB keys / macropad. SHIFT resets the bank
             // to the middle octave.
