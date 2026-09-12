@@ -377,6 +377,37 @@ void draw_pad_note_grid(byte f) {
                       mBoton[f]->w - 11, mBoton[f]->h - 11, border);
 }
 
+// Visual metronome across the pads: the sixteen pads are the sixteen steps,
+// and a bar along the top edge follows the sequencer. Only the step that just
+// changed is repainted, so this costs nothing between steps.
+//
+// Quarter notes are marked apart from the sixteenths in between, which is
+// what makes it read as a metronome rather than just a moving light.
+#define PAD_METRO_H 6
+
+void draw_pad_metronome() {
+  static int8_t last = -1;
+  int8_t cur = playing ? (int8_t)(sstep & 15) : -1;
+  if (cur == last) return;
+
+  if (last >= 0 && last < 16) {
+    M5.Display.fillRect(mBoton[last]->x + 8, mBoton[last]->y + 3,
+                        mBoton[last]->w - 16, PAD_METRO_H, BLACK);
+  }
+  if (cur >= 0) {
+    uint16_t colour = (cur % 4 == 0) ? ZRED : ZYELLOW;
+    M5.Display.fillRect(mBoton[cur]->x + 8, mBoton[cur]->y + 3,
+                        mBoton[cur]->w - 16, PAD_METRO_H, colour);
+  } else {
+    // Stopped: clear the whole row rather than leaving the last step lit.
+    for (byte f = 0; f < 16; f++) {
+      M5.Display.fillRect(mBoton[f]->x + 8, mBoton[f]->y + 3,
+                          mBoton[f]->w - 16, PAD_METRO_H, BLACK);
+    }
+  }
+  last = cur;
+}
+
 // Redraws only the pads whose flash is still live, plus any that just
 // changed, so this costs nothing while no notes are arriving.
 void refresh_pad_note_grids() {

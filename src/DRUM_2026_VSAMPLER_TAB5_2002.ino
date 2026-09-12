@@ -777,6 +777,9 @@ static void task_LCD(void* pvParameters) {
     refresh_pad_notes = false;
     refresh_pad_note_grids();
 
+    // Visual metronome running across the pads in time with the sequencer.
+    draw_pad_metronome();
+
     vTaskDelay(1);
   }
   // this code never runs
