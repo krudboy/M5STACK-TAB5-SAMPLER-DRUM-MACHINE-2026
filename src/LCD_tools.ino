@@ -1234,12 +1234,25 @@ void draw_hid_monitor() {
     M5.Display.print("USB: no device");
   }
 
+  // --- Last MIDI note in ---
+  M5.Display.setCursor(px + 6, py + 22);
+  if (last_midi_note <= 127) {
+    // Flash on arrival, then settle, so a stream of notes is visible as
+    // activity rather than a number that may or may not be current.
+    bool fresh = (millis() - last_midi_note_ms) < 300;
+    M5.Display.setTextColor(fresh ? ZGREENALTER : DARKGREY, BLACK);
+    M5.Display.printf("NOTE %3d ch%-2d", last_midi_note, last_midi_note_ch);
+  } else {
+    M5.Display.setTextColor(DARKGREY, BLACK);
+    M5.Display.print("NOTE --");
+  }
+
   // --- Raw HID reports, newest first (USB KBD toggle) ---
   if (usb_hid_monitor) {
     M5.Display.setTextColor(ZYELLOW, BLACK);
     for (uint8_t line = 0; line < 3; line++) {
       if (hidLogLen[line] == 0) continue;
-      M5.Display.setCursor(px + 6, py + 25 + (line * 20));
+      M5.Display.setCursor(px + 6, py + 44 + (line * 18));
       M5.Display.printf("i%d", hidLogIface[line]);
       for (uint8_t b = 0; b < hidLogLen[line] && b < 8; b++) {
         M5.Display.printf(" %02x", hidLogBytes[line][b]);

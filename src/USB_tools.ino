@@ -349,13 +349,21 @@ void parse_midi_message(const uint8_t* p) {
         // is learned by playing it, exactly like a USB device. Consumes the
         // note when mapping is armed or the note is bound; otherwise falls
         // through to the behaviour below.
+        last_midi_note = note;
+        last_midi_note_ch = channel;
+        last_midi_note_ms = millis();
+
         if (midi_note_run_action(note)) break;
         //Serial.printf("%3d, %3d, %2d\n", note, velocity, channel);  
 
         if (channel==1) {
+          // The APC KEY25 sends its transport and page controls on channel 1.
+          // Anything it doesn't claim must fall through to playing the note,
+          // or an ordinary keyboard on channel 1 does nothing at all.
+          bool apc_handled = false;
           //Serial.printf("%3d, %3d, %2d\n", note, velocity, channel);
           if (note<8) {
-       
+
           }
 
           if (note==91) { // play ("PLAY/PAUSE")
@@ -378,9 +386,11 @@ void parse_midi_message(const uint8_t* p) {
                 }
               }
               playing=!playing; 
+              apc_handled = true;
           } 
                  
           if (note==81) { // panic ("STOP ALL CLIPS")
+            apc_handled = true;
             //MIDI.sendControlChange(ALL_NOTES_OFF, 127, 1);
             delay(1);
             //MIDI.sendControlChange(ALL_SOUND_OFF, 127, 1);
@@ -400,6 +410,7 @@ void parse_midi_message(const uint8_t* p) {
               if (pageRot>2) rPage=2;
               refreshMODES=true;
               refresh_rPage=true;
+              apc_handled = true;
 
             }
           }
@@ -416,6 +427,14 @@ void parse_midi_message(const uint8_t* p) {
             //   send_midi_message(0x90, channel, note, 1);
             //   pattern[rnote]=lastNotePlayed;
             // }
+          }
+
+          if (!apc_handled) {
+            synthESP32_TRIGGER_P(selected_sound, note);
+            if (recording) {
+              bitWrite(pattern[selected_sound], sstep, 1);
+              melodic[selected_sound][sstep] = note;
+            }
           }
 
         } else if (channel == Rebirth338Engine::ACID_A_CHANNEL ||

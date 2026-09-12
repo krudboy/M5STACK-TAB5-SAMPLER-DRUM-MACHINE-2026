@@ -119,6 +119,12 @@ uint16_t hidPacketSize[MAX_HID_IFACES] = { 8, 8, 8, 8 };
 bool live_play = false;
 uint8_t live_bank = 4;  // octave: keys play live_bank * 12 + semitone
 
+// Last MIDI note in, shown on the status panel so it's obvious whether notes
+// are arriving at all and on which channel.
+uint8_t last_midi_note = 255;
+uint8_t last_midi_note_ch = 0;
+unsigned long last_midi_note_ms = 0;
+
 // USB KBD monitor: newest-first log of the most recent HID reports
 #define HID_LOG_LINES 4
 bool usb_hid_monitor = false;
