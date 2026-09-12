@@ -656,8 +656,12 @@ void REFRESH_KEYS() {
     if (playing) {
       drawBT(22, DARKGREEN);
     }
+    // PLAY doubles as the always-visible record control (SHIFT + PLAY arms
+    // it). Distinguish armed from actually capturing — while performing, the
+    // thing you need to know is whether notes are going down, and a single
+    // "REC" for both states didn't say.
     if (recording) {
-      drawBT(22, ZRED, "   REC   ");
+      drawBT(22, ZRED, playing ? "  REC *  " : " REC ARM ");
     }
     // song
     if (songing) {
