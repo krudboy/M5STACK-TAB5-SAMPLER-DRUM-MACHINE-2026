@@ -452,6 +452,12 @@ void REFRESH_KEYS() {
       snprintf(lbl, sizeof(lbl), "LIVE o%d", live_bank);
       drawBT(52, ZGREENALTER, lbl);
     }
+    // While mapping, the button shows the target the next key will take
+    if (keymap_armed) {
+      char tgt[16];
+      keymap_target_name(keymap_target, tgt, sizeof(tgt));
+      drawBT(53, ORANGE, tgt);
+    }
     refresh_hid_monitor = true;
 
   }
@@ -1133,6 +1139,8 @@ void fillBPOS() {
   mBoton[51] = new Boton(  320, 200, 160, 100, "USB KBD",1);
   // Live note play from USB keys / macropad, with bank stepping
   mBoton[52] = new Boton(  480, 200, 160, 100, "LIVE",1);
+  // Map any macropad / keyboard key to an action
+  mBoton[53] = new Boton(  640, 200, 160, 100, "KEYMAP",1);
 
   mBoton[46] = new Boton(  800, 200, 80, 100, "0",2);
   mBoton[47] = new Boton(  880, 200, 80, 100, "1",2); 
@@ -1209,7 +1217,7 @@ void fillBPOS() {
 // raw HID reports coming in, so a macropad, knob or joystick can be mapped
 // from real captured data rather than guesswork.
 void draw_hid_monitor() {
-  const int px = 640, py = 200, pw = 480, ph = 100;
+  const int px = 800, py = 200, pw = 320, ph = 100;
 
   M5.Display.fillRect(px, py, pw, ph, BLACK);
   M5.Display.drawRect(px, py, pw - 1, ph - 1, DARKGREY);

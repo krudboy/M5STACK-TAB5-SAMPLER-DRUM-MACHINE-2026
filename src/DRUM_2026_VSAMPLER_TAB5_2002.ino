@@ -33,7 +33,7 @@ unsigned long lastCheck = 0;
 #define PIN_JACK 0x80  // Pin 7 (1 << 7)
 
 
-const int MAX_BUTTONS = 53;  // 50 = LEARN, 51 = USB KBD monitor, 52 = LIVE
+const int MAX_BUTTONS = 54;  // 50 LEARN, 51 USB KBD, 52 LIVE, 53 KEYMAP
 const int MAX_BARS = 45;
 
 Boton* mBoton[MAX_BUTTONS];

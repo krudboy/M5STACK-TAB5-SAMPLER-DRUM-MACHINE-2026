@@ -104,6 +104,112 @@ void midi_learn_clear(uint8_t rot) {
   Serial.printf("MIDI learn: cleared parameter %d\n", rot);
 }
 
+////////////////////////////////////////////////////////////////////////////
+// Key mapping — any macropad, any keyboard.
+//
+// The built-in keypad map only fits devices that report the usages a numeric
+// keypad does. Macropads differ wildly: some send function keys, some letters,
+// some media usages. So every keycode can instead be bound to an action here,
+// learned from the device itself, and stored to SPIFFS.
+//
+// A learned binding wins over the built-in map, and anything unmapped falls
+// through to it, so a plain keyboard keeps working untouched.
+
+#define KEYMAP_FILE "/KEYMAP"
+#define KEYMAP_SIZE 256
+
+#define KEYACT_NONE 0
+#define KEYACT_PAD 1   // arg = pad 0-15
+#define KEYACT_NOTE 2  // arg = semitone 0-11 within the live bank
+#define KEYACT_BANK_UP 3
+#define KEYACT_BANK_DOWN 4
+#define KEYACT_SOUND_NEXT 5
+#define KEYACT_SOUND_PREV 6
+#define KEYACT_PLAY 7
+#define KEYACT_STOP 8
+#define KEYACT_RECORD 9
+#define KEYACT_LIVE 10
+
+static uint8_t key_action[KEYMAP_SIZE];
+static uint8_t key_action_arg[KEYMAP_SIZE];
+
+// Mapping mode: the target being assigned, shown on the KEYMAP button. Keys
+// bind to it and step to the next, so a whole pad can be mapped by playing
+// through it once.
+static bool keymap_armed = false;
+static uint8_t keymap_target = 0;
+
+#define KEYMAP_TARGET_COUNT 36  // 16 pads + 12 notes + 8 commands
+
+static void keymap_target_action(uint8_t target, uint8_t *act, uint8_t *arg) {
+  if (target < 16) {
+    *act = KEYACT_PAD;
+    *arg = target;
+  } else if (target < 28) {
+    *act = KEYACT_NOTE;
+    *arg = target - 16;
+  } else {
+    static const uint8_t cmds[8] = { KEYACT_BANK_UP, KEYACT_BANK_DOWN, KEYACT_SOUND_NEXT,
+                                     KEYACT_SOUND_PREV, KEYACT_PLAY, KEYACT_STOP,
+                                     KEYACT_RECORD, KEYACT_LIVE };
+    *act = cmds[(target - 28) & 7];
+    *arg = 0;
+  }
+}
+
+static void keymap_target_name(uint8_t target, char *out, size_t len) {
+  uint8_t act, arg;
+  keymap_target_action(target, &act, &arg);
+  switch (act) {
+    case KEYACT_PAD: snprintf(out, len, "PAD %d", arg); break;
+    case KEYACT_NOTE: snprintf(out, len, "NOTE %d", arg); break;
+    case KEYACT_BANK_UP: snprintf(out, len, "BANK+"); break;
+    case KEYACT_BANK_DOWN: snprintf(out, len, "BANK-"); break;
+    case KEYACT_SOUND_NEXT: snprintf(out, len, "SND+"); break;
+    case KEYACT_SOUND_PREV: snprintf(out, len, "SND-"); break;
+    case KEYACT_PLAY: snprintf(out, len, "PLAY"); break;
+    case KEYACT_STOP: snprintf(out, len, "STOP"); break;
+    case KEYACT_RECORD: snprintf(out, len, "REC"); break;
+    case KEYACT_LIVE: snprintf(out, len, "LIVE"); break;
+    default: snprintf(out, len, "-"); break;
+  }
+}
+
+void keymap_reset() {
+  memset(key_action, KEYACT_NONE, sizeof(key_action));
+  memset(key_action_arg, 0, sizeof(key_action_arg));
+}
+
+void keymap_save() {
+  File file = SPIFFS.open(KEYMAP_FILE, FILE_WRITE);
+  if (!file) {
+    Serial.println("Key map: could not open file for writing");
+    return;
+  }
+  file.write(key_action, sizeof(key_action));
+  file.write(key_action_arg, sizeof(key_action_arg));
+  file.close();
+}
+
+void keymap_load() {
+  keymap_reset();
+  File file = SPIFFS.open(KEYMAP_FILE, FILE_READ);
+  if (!file) return;
+  file.read(key_action, sizeof(key_action));
+  file.read(key_action_arg, sizeof(key_action_arg));
+  file.close();
+}
+
+// One key drives one action: rebinding a key releases whatever it had.
+void keymap_bind(uint8_t keycode, uint8_t act, uint8_t arg) {
+  if (keycode == 0) return;
+  key_action[keycode] = act;
+  key_action_arg[keycode] = arg;
+  keymap_save();
+  Serial.printf("Key map: 0x%02x -> action %d arg %d\n", keycode, act, arg);
+}
+
 void midi_learn_begin() {
   midi_learn_load();
+  keymap_load();
 }

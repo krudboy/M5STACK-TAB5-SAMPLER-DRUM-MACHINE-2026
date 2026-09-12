@@ -141,6 +141,12 @@ static void usb_kbd_nudge(int delta) {
 static void usb_kbd_encoder(int delta) {
   if (rebirth_ui_active) {
     rb_focus_adjust(delta);
+  } else if (keymap_armed) {
+    // While mapping, the knob picks which target the next key will take.
+    int t = (int)keymap_target + delta;
+    while (t < 0) t += KEYMAP_TARGET_COUNT;
+    keymap_target = (uint8_t)(t % KEYMAP_TARGET_COUNT);
+    refreshMODES = true;
   } else if (live_play) {
     // While playing live the knob is more useful moving the octave than
     // editing whatever parameter happened to be selected.
@@ -220,8 +226,66 @@ static void usb_kbd_stop() {
   }
 }
 
+// Plays a note on the selected sound, mirroring it out over MIDI when live.
+static void usb_kbd_play_pitch(int pitch) {
+  if (pitch < 0) pitch = 0;
+  if (pitch > 127) pitch = 127;
+  synthESP32_TRIGGER_P(selected_sound, pitch);
+  if (live_play) send_midi_message(0x90, 1, (uint8_t)pitch, 100);
+  if (recording) {
+    bitWrite(pattern[selected_sound], sstep, 1);
+    melodic[selected_sound][sstep] = pitch;
+  }
+}
+
+// Runs a learned key binding. Returns false if the key has none, so the
+// caller can fall through to the built-in map.
+static bool usb_kbd_run_action(uint8_t keycode) {
+  uint8_t act = key_action[keycode];
+  if (act == KEYACT_NONE) return false;
+  uint8_t arg = key_action_arg[keycode];
+
+  switch (act) {
+    case KEYACT_PAD:
+      synthESP32_TRIGGER(arg);
+      if (recording) {
+        bitWrite(pattern[arg], sstep, 1);
+        melodic[arg][sstep] = ROTvalue[arg][12];
+      }
+      usb_kbd_select_track(arg);
+      break;
+    case KEYACT_NOTE: usb_kbd_play_pitch(live_bank * 12 + arg); break;
+    case KEYACT_BANK_UP:
+      if (live_bank < 10) live_bank++;
+      break;
+    case KEYACT_BANK_DOWN:
+      if (live_bank > 0) live_bank--;
+      break;
+    case KEYACT_SOUND_NEXT: usb_kbd_select_track((selected_sound + 1) & 15); break;
+    case KEYACT_SOUND_PREV: usb_kbd_select_track((selected_sound + 15) & 15); break;
+    case KEYACT_PLAY: usb_kbd_toggle_play(); break;
+    case KEYACT_STOP: usb_kbd_stop(); break;
+    case KEYACT_RECORD: usb_kbd_toggle_record(); break;
+    case KEYACT_LIVE: live_play = !live_play; break;
+    default: return false;
+  }
+  refreshMODES = true;
+  return true;
+}
+
 void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
   bool shift = (modifiers & HID_MOD_SHIFT) != 0;
+
+  // Mapping mode: the key just pressed takes the displayed target, then the
+  // target steps on, so a whole macropad maps by playing through it once.
+  if (keymap_armed) {
+    uint8_t act, arg;
+    keymap_target_action(keymap_target, &act, &arg);
+    keymap_bind(keycode, act, arg);
+    keymap_target = (keymap_target + 1) % KEYMAP_TARGET_COUNT;
+    refreshMODES = true;
+    return;
+  }
 
   // Learn takes the next key pressed and binds it to the selected parameter.
   if (learn_armed) {
@@ -246,6 +310,10 @@ void usb_kbd_key_down(uint8_t keycode, uint8_t modifiers) {
     usb_kbd_encoder_click();
     return;
   }
+
+  // A learned action wins over everything built in, so any macropad can be
+  // mapped to suit the device rather than the other way round.
+  if (usb_kbd_run_action(keycode)) return;
 
   // A learned key selects its parameter, ahead of the fixed map below.
   int learned = midi_learn_lookup_key(keycode);

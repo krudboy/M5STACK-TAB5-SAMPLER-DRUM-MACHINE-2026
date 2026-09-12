@@ -534,6 +534,18 @@ void DO_KEYPAD(){
               }
               refreshMODES=true;
               break;
+            // Map macropad / keyboard keys. SHIFT clears every binding.
+            case 53:
+              if (shiftR1) {
+                keymap_reset();
+                keymap_save();
+                keymap_armed=false;
+              } else {
+                keymap_armed=!keymap_armed;
+                keymap_target=0;
+              }
+              refreshMODES=true;
+              break;
             // USB HID report monitor on/off
             case 51:
               usb_hid_monitor=!usb_hid_monitor;
