@@ -497,6 +497,49 @@ void usb_kbd_handle_report(uint8_t iface, const uint8_t *report) {
   memcpy(previous[iface], &report[2], 6);
 }
 
+// Reports from an HID interface that isn't a boot keyboard.
+//
+// A macropad usually declares subclass 0 / protocol 0, meaning it has no boot
+// protocol at all and its report layout is described only by a report
+// descriptor we don't parse. Rather than ignore those devices — which left
+// every key on such a pad dead — treat any byte sitting in the HID keyboard
+// usage range as a pressed key and edge-detect against the previous report.
+// That covers both the common boot-like layout and one with a report ID in
+// front of it.
+#define HID_USAGE_KEY_MIN 0x04
+#define HID_USAGE_KEY_MAX 0xA4
+
+void usb_hid_handle_generic(uint8_t iface, const uint8_t *data, uint8_t len) {
+  static uint8_t previous[MAX_HID_IFACES][8] = { { 0 } };
+  if (iface >= MAX_HID_IFACES) return;
+
+  uint8_t now[8] = { 0 };
+  uint8_t count = 0;
+  uint8_t modifiers = 0;
+
+  for (uint8_t i = 0; i < len && count < 8; i++) {
+    uint8_t b = data[i];
+    if (b >= HID_USAGE_KEY_MIN && b <= HID_USAGE_KEY_MAX) {
+      now[count++] = b;
+    } else if (b >= 0xE0 && b <= 0xE7) {
+      modifiers |= (1 << (b - 0xE0));  // modifier reported as a usage
+    }
+  }
+
+  for (uint8_t i = 0; i < count; i++) {
+    bool was_held = false;
+    for (uint8_t j = 0; j < 8; j++) {
+      if (previous[iface][j] == now[i]) {
+        was_held = true;
+        break;
+      }
+    }
+    if (!was_held) usb_kbd_key_down(now[i], modifiers);
+  }
+
+  memcpy(previous[iface], now, sizeof(now));
+}
+
 // Consumer Control reports from a knob's own HID interface. The layout varies
 // between devices — some prefix a report ID, some send a 16-bit little-endian
 // usage — so rather than assume an offset, look for the usage anywhere in the

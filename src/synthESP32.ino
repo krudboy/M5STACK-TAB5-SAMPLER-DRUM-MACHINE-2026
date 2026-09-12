@@ -386,8 +386,9 @@ static void write_buffer() {
           if (aFin > dbgPeakFinal) dbgPeakFinal = aFin;
           if (aRb > dbgPeakRb) dbgPeakRb = aRb;
           if (++dbgCount >= SAMPLE_RATE) {
-            Serial.printf("AUDIO dry=%ld final=%ld rebirth=%ld mvol=%d playing=%d\n",
-                          (long)dbgPeakDry, (long)dbgPeakFinal, (long)dbgPeakRb, mvol, playing);
+            Serial.printf("AUDIO dry=%ld final=%ld rebirth=%ld mvol=%d playing=%d | HID ifaces=%d reports=%lu midi=%d\n",
+                          (long)dbgPeakDry, (long)dbgPeakFinal, (long)dbgPeakRb, mvol, playing,
+                          hidIfaceCount, (unsigned long)hidReportCount, isMIDI);
             dbgCount = 0;
             dbgPeakDry = dbgPeakFinal = dbgPeakRb = 0;
           }

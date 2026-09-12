@@ -173,14 +173,32 @@ void hid_transfer_cb(usb_transfer_t *transfer) {
   if (transfer->actual_num_bytes > 0) {
     hid_log_report(idx, transfer->data_buffer, transfer->actual_num_bytes);
 
+    // TEMP: report bytes to serial so an unknown pad's layout can be read.
+    {
+      uint8_t n = transfer->actual_num_bytes;
+      if (n > 12) n = 12;
+      bool any = false;
+      for (uint8_t b = 0; b < n; b++) {
+        if (transfer->data_buffer[b]) any = true;
+      }
+      if (any) {
+        Serial.printf("HIDRPT i%d len%d:", idx, transfer->actual_num_bytes);
+        for (uint8_t b = 0; b < n; b++) Serial.printf(" %02x", transfer->data_buffer[b]);
+        Serial.println();
+      }
+    }
+
     // Only boot keyboard reports have the fixed 8-byte modifier/keycode
-    // layout. Anything else is treated as a Consumer Control interface (a
-    // media knob), and still logged raw for the monitor either way.
+    // layout. Everything else goes through both the Consumer decoder (for a
+    // knob) and the generic one (for a pad with no boot protocol), since a
+    // single interface often carries both.
     if (hidIsBootKeyboard[idx] && transfer->actual_num_bytes == 8) {
       usb_kbd_handle_report(idx, transfer->data_buffer);
     } else {
       usb_consumer_handle_report(idx, transfer->data_buffer,
                                  (uint8_t)transfer->actual_num_bytes);
+      usb_hid_handle_generic(idx, transfer->data_buffer,
+                             (uint8_t)transfer->actual_num_bytes);
     }
   }
 
@@ -288,6 +306,70 @@ void usb_keyboard_poll() {
       ESP_LOGW("", "usb_host_transfer_submit (hid %d) fail: %x", idx, err);
     }
   }
+
+  // TEMP: whether a transfer is actually outstanding on each interface. If
+  // these never sit at 1, nothing is listening and no report can arrive.
+  {
+    static unsigned long last = 0;
+    if (millis() - last > 3000) {
+      last = millis();
+      Serial.printf("HIDPOLL ifaces=%d", hidIfaceCount);
+      for (uint8_t i = 0; i < hidIfaceCount; i++) {
+        Serial.printf(" [%d]inflight=%d ep=0x%02x mps=%d alloc=%d", i, hidPolling[i] ? 1 : 0,
+                      HidIn[i] ? HidIn[i]->bEndpointAddress : 0, hidPacketSize[i],
+                      HidIn[i] ? 1 : 0);
+      }
+      Serial.println();
+    }
+  }
+}
+
+// HID class requests. Some devices stay silent until the host has sent
+// SET_IDLE — they are waiting to be told how often to report, and never
+// volunteer anything in the meantime.
+#define HID_REQ_SET_IDLE 0x0A
+#define HID_REQ_SET_PROTOCOL 0x0B
+#define HID_DESC_REPORT 0x22
+
+static void hid_ctrl_cb(usb_transfer_t *transfer) {
+  ESP_LOGI("", "HID ctrl request done, status %d, %d bytes", transfer->status,
+           transfer->actual_num_bytes);
+  // The report descriptor comes back here; log it so an unknown pad's layout
+  // can be read off rather than guessed at.
+  if (transfer->status == 0 && transfer->actual_num_bytes > sizeof(usb_setup_packet_t)) {
+    uint8_t *d = transfer->data_buffer + sizeof(usb_setup_packet_t);
+    int n = transfer->actual_num_bytes - sizeof(usb_setup_packet_t);
+    if (n > 64) n = 64;
+    Serial.printf("HIDDESC len%d:", n);
+    for (int i = 0; i < n; i++) Serial.printf(" %02x", d[i]);
+    Serial.println();
+  }
+  usb_host_transfer_free(transfer);
+}
+
+static void hid_send_ctrl(uint8_t bmRequestType, uint8_t bRequest, uint16_t wValue,
+                          uint16_t wIndex, uint16_t wLength) {
+  usb_transfer_t *ctrl = NULL;
+  if (usb_host_transfer_alloc(sizeof(usb_setup_packet_t) + wLength, 0, &ctrl) != ESP_OK) return;
+
+  usb_setup_packet_t *setup = (usb_setup_packet_t *)ctrl->data_buffer;
+  setup->bmRequestType = bmRequestType;
+  setup->bRequest = bRequest;
+  setup->wValue = wValue;
+  setup->wIndex = wIndex;
+  setup->wLength = wLength;
+
+  ctrl->device_handle = Device_Handle;
+  ctrl->bEndpointAddress = 0;
+  ctrl->callback = hid_ctrl_cb;
+  ctrl->context = NULL;
+  ctrl->num_bytes = sizeof(usb_setup_packet_t) + wLength;
+
+  esp_err_t err = usb_host_transfer_submit_control(Client_Handle, ctrl);
+  if (err != ESP_OK) {
+    ESP_LOGW("", "HID ctrl submit fail: %x", err);
+    usb_host_transfer_free(ctrl);
+  }
 }
 
 void show_config_desc_full(const usb_config_desc_t *config_desc)
@@ -295,6 +377,12 @@ void show_config_desc_full(const usb_config_desc_t *config_desc)
   const uint8_t *p = &config_desc->val[0];
   uint8_t bLength;
   int8_t currentHid = -1;  // HID slot the endpoints that follow belong to
+
+  // Log what the device actually declares. The interface/endpoint pairing
+  // matters: claiming an interface but then listening on an endpoint that
+  // belongs to a different one gives a transfer that waits forever.
+  Serial.printf("USBDESC total=%d interfaces=%d\n", config_desc->wTotalLength,
+                config_desc->bNumInterfaces);
   for (int i = 0; i < config_desc->wTotalLength; i+=bLength, p+=bLength) {
     bLength = *p;
     if ((i + bLength) <= config_desc->wTotalLength) {
@@ -302,21 +390,32 @@ void show_config_desc_full(const usb_config_desc_t *config_desc)
       switch (bDescriptorType) {
         case USB_B_DESCRIPTOR_TYPE_INTERFACE: {
           const usb_intf_desc_t *intf = (const usb_intf_desc_t *)p;
+          Serial.printf("USBDESC iface num=%d alt=%d class=0x%02x sub=%d proto=%d eps=%d\n",
+                        intf->bInterfaceNumber, intf->bAlternateSetting, intf->bInterfaceClass,
+                        intf->bInterfaceSubClass, intf->bInterfaceProtocol, intf->bNumEndpoints);
           currentHid = -1;
-          if (intf->bInterfaceClass == USB_CLASS_HID) {
+          // Only the default alternate setting: claiming altsetting 1 of the
+          // same interface would burn a slot and leave us listening on an
+          // endpoint the device isn't using.
+          if (intf->bInterfaceClass == USB_CLASS_HID && intf->bAlternateSetting == 0) {
             currentHid = check_interface_desc_hid(p);
-          } else if (!isMIDI) {
+          } else if (!isMIDI && intf->bInterfaceClass != USB_CLASS_HID) {
             check_interface_desc_MIDI(p);
           }
           break;
         }
-        case USB_B_DESCRIPTOR_TYPE_ENDPOINT:
+        case USB_B_DESCRIPTOR_TYPE_ENDPOINT: {
+          const usb_ep_desc_t *ep = (const usb_ep_desc_t *)p;
+          Serial.printf("USBDESC   ep addr=0x%02x attr=0x%02x mps=%d interval=%d\n",
+                        ep->bEndpointAddress, ep->bmAttributes, ep->wMaxPacketSize,
+                        ep->bInterval);
           if (currentHid >= 0) {
             prepare_endpoint_hid(p, (uint8_t)currentHid);
           } else if (isMIDI && !isMIDIReady) {
             prepare_endpoints(p);
           }
           break;
+        }
         default:
           break;
       }
@@ -325,6 +424,16 @@ void show_config_desc_full(const usb_config_desc_t *config_desc)
       ESP_LOGE("", "Descriptor USB invalido!");
       return;
     }
+  }
+
+  // Wake the HID interfaces up. SET_IDLE with duration 0 means "report only
+  // on change, indefinitely", which is what a pad should do — and some
+  // devices send nothing at all until they have been told. Also pull the
+  // report descriptor so an unknown pad's layout can be read from the log.
+  for (uint8_t i = 0; i < hidIfaceCount; i++) {
+    hid_send_ctrl(0x21, HID_REQ_SET_IDLE, 0x0000, hidIfaceNumber[i], 0);
+    hid_send_ctrl(0x81, USB_B_REQUEST_GET_DESCRIPTOR, (HID_DESC_REPORT << 8),
+                  hidIfaceNumber[i], 64);
   }
 }
 
